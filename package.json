@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "pinia": "^3.0.4",
-    "vue": "beta"
+    "vue": "beta",
+    "vue-router": "^5.0.4"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
