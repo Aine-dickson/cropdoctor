@@ -10,7 +10,7 @@
             </button>
             <div v-else class="brand">
                 <span class="brand-hex">⬡</span>
-                <span class="brand-name">CropDoctor</span>
+                <span class="brand-name">CropDr.</span>
             </div>
         </div>
 
