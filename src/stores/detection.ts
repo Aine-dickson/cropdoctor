@@ -4,7 +4,7 @@ import { ref } from 'vue'
 const PLANT_ID_KEY = import.meta.env.VITE_PLANT_ID_KEY || 'YOUR_PLANT_ID_KEY'
 const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || 'YOUR_ANTHROPIC_KEY'
 
-type CatalogueItem = {
+interface Product {
     id: number
     name: string
     emoji: string
@@ -19,24 +19,25 @@ type CatalogueItem = {
     diseases: string[]
 }
 
-type Advice = {
+interface Advice {
     summary: string
     steps: string[]
 }
 
-type DetectionCore = {
+interface DetectionResult {
     plant: string
     disease: string
     confidence: number
     severity: string
+    advice?: Advice
+    products?: Product[]
 }
 
-type DetectionResult = DetectionCore & {
-    advice: Advice
-    products: CatalogueItem[]
+interface OrderSnapshot {
+    [key: string]: unknown
 }
 
-const catalogue: CatalogueItem[] = [
+const catalogue: Product[] = [
     { id: 1, name: 'Ridomil Gold 68WG', emoji: '🟡', type: 'Systemic fungicide', price: 28000, topPick: true, treats: 'Late Blight, Downy Mildew', application: 'Foliar spray', dosage: '25g / 15L water', supplier: 'AgroUganda Ltd', description: 'Highly effective systemic fungicide that moves through the plant to kill Late Blight at the source. One of the most trusted treatments for Phytophthora infestans in East Africa.', diseases: ['Late Blight', 'Downy Mildew'] },
     { id: 2, name: 'Copper Oxychloride', emoji: '🔵', type: 'Contact fungicide', price: 12000, topPick: false, treats: 'Blight, Leaf Spot, Rust', application: 'Foliar spray', dosage: '30g / 15L water', supplier: 'FarmCare Uganda', description: 'Broad-spectrum contact fungicide. Best applied before infection spreads. Forms a protective barrier on leaves.', diseases: ['Late Blight', 'Early Blight', 'Leaf Spot', 'Rust'] },
     { id: 3, name: 'Mancozeb 80WP', emoji: '🟤', type: 'Protective fungicide', price: 9500, topPick: false, treats: 'Early & Late Blight', application: 'Foliar spray', dosage: '20g / 15L water', supplier: 'FarmCare Uganda', description: 'Preventive fungicide that protects healthy plant tissue from infection. Best used at first signs or as prevention.', diseases: ['Late Blight', 'Early Blight'] },
@@ -52,13 +53,12 @@ export const useDetectionStore = defineStore('detection', () => {
     const scanning = ref(false)
     const error = ref<string | null>(null)
 
-    // Confirmed order snapshot
-    const confirmedOrder = ref<DetectionResult | null>(null)
-    const confirmedCart = ref<CatalogueItem[]>([])
+    const confirmedOrder = ref<OrderSnapshot | null>(null)
+    const confirmedCart = ref<Product[]>([])
     const confirmedTotal = ref(0)
     const orderRef = ref<string | null>(null)
 
-    function setImage(url: string, base64: string) {
+    function setImage(url: string | null, base64: string | null) {
         previewUrl.value = url
         imageBase64.value = base64
         result.value = null
@@ -78,7 +78,7 @@ export const useDetectionStore = defineStore('detection', () => {
     }
 
     function getById(id: number | string) {
-        return catalogue.find(p => p.id === Number(id))
+        return catalogue.find((product) => product.id === Number(id))
     }
 
     async function runScan() {
@@ -88,14 +88,12 @@ export const useDetectionStore = defineStore('detection', () => {
         try {
             const det = await identifyDisease(imageBase64.value)
             const advice = await getAdvice(det.disease, det.plant)
-            result.value = {
-                ...det,
-                advice,
-                products: getProductsForDisease(det.disease),
-            }
+            det.advice = advice
+            det.products = getProductsForDisease(det.disease)
+            result.value = det
             return true
-        } catch (e: unknown) {
-            error.value = e instanceof Error ? e.message : 'Something went wrong. Please try again.'
+        } catch (err: unknown) {
+            error.value = err instanceof Error ? err.message : 'Something went wrong. Please try again.'
             return false
         } finally {
             scanning.value = false
@@ -103,13 +101,13 @@ export const useDetectionStore = defineStore('detection', () => {
     }
 
     function getProductsForDisease(disease: string) {
-        const matched = catalogue.filter(p =>
-            p.diseases.some(d => disease.toLowerCase().includes(d.toLowerCase()))
+        const matched = catalogue.filter((product) =>
+            product.diseases.some((d) => disease.toLowerCase().includes(d.toLowerCase())),
         )
         return matched.length ? matched : catalogue.slice(0, 3)
     }
 
-    async function identifyDisease(base64: string): Promise<DetectionCore> {
+    async function identifyDisease(base64: string): Promise<DetectionResult> {
         if (PLANT_ID_KEY === 'YOUR_PLANT_ID_KEY') {
             await delay(1400)
             return { plant: 'Tomato', disease: 'Late Blight', confidence: 87, severity: 'High' }
@@ -120,7 +118,12 @@ export const useDetectionStore = defineStore('detection', () => {
             body: JSON.stringify({ images: [`data:image/jpeg;base64,${base64}`], health: 'all' }),
         })
         if (!res.ok) throw new Error(`Plant.id error: ${res.status}`)
-        const data: any = await res.json()
+        const data = (await res.json()) as {
+            result?: {
+                disease?: { suggestions?: Array<{ name: string; probability?: number; disease_details?: { severity?: string } }> }
+                classification?: { suggestions?: Array<{ name?: string }> }
+            }
+        }
         const top = data.result?.disease?.suggestions?.[0]
         if (!top) throw new Error('No disease detected. Try a clearer photo.')
         return {
@@ -135,41 +138,53 @@ export const useDetectionStore = defineStore('detection', () => {
         if (ANTHROPIC_KEY === 'YOUR_ANTHROPIC_KEY') {
             await delay(1200)
             return {
-                summary: 'Late Blight is a fast-spreading fungal disease caused by Phytophthora infestans. It thrives in cool, wet weather and can destroy an entire crop within days if untreated.',
+                summary:
+                    'Late Blight is a fast-spreading fungal disease caused by Phytophthora infestans. It thrives in cool, wet weather and can destroy an entire crop within days if untreated.',
                 steps: [
-                    'Remove all visibly infected leaves and stems. Do not compost — burn or bury them.',
+                    'Remove all visibly infected leaves and stems. Do not compost - burn or bury them.',
                     'Apply Ridomil Gold or copper-based fungicide every 7 days, especially before rain.',
                     'Water plants at the base only, in the morning, so leaves dry before nightfall.',
                     'Stake plants upright and prune dense foliage to improve air circulation.',
-                    'Next season, rotate crops — avoid tomatoes or potatoes in the same bed.',
+                    'Next season, rotate crops - avoid tomatoes or potatoes in the same bed.',
                 ],
             }
         }
         const res = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
-            headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+            headers: {
+                'x-api-key': ANTHROPIC_KEY,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+            },
             body: JSON.stringify({
-                model: 'claude-sonnet-4-20250514', max_tokens: 600,
-                system: `Agricultural expert for Ugandan smallholder farmers. Respond ONLY with JSON, no markdown:
-{"summary":"2-3 sentence explanation","steps":["step1","step2","step3","step4","step5"]}
-Simple language, practical low-cost steps.`,
+                model: 'claude-sonnet-4-20250514',
+                max_tokens: 600,
+                system:
+                    'Agricultural expert for Ugandan smallholder farmers. Respond ONLY with JSON, no markdown:\n{"summary":"2-3 sentence explanation","steps":["step1","step2","step3","step4","step5"]}\nSimple language, practical low-cost steps.',
                 messages: [{ role: 'user', content: `Plant: ${plant}\nDisease: ${disease}` }],
             }),
         })
         if (!res.ok) throw new Error(`Claude error: ${res.status}`)
-        const data: any = await res.json()
-        const parsed = JSON.parse(data.content[0].text.replace(/```json|```/g, '').trim()) as Partial<Advice>
-        return {
-            summary: typeof parsed.summary === 'string' ? parsed.summary : '',
-            steps: Array.isArray(parsed.steps) ? parsed.steps.map(String) : [],
-        }
+        const data = (await res.json()) as { content?: Array<{ text?: string }> }
+        const rawText = data.content?.[0]?.text ?? ''
+        return JSON.parse(rawText.replace(/```json|```/g, '').trim()) as Advice
     }
 
-    const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+    const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
     return {
-        previewUrl, imageBase64, result, scanning, error,
-        confirmedOrder, confirmedCart, confirmedTotal, orderRef,
-        setImage, reset, runScan, getById,
+        previewUrl,
+        imageBase64,
+        result,
+        scanning,
+        error,
+        confirmedOrder,
+        confirmedCart,
+        confirmedTotal,
+        orderRef,
+        setImage,
+        reset,
+        runScan,
+        getById,
     }
 })

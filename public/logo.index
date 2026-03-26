@@ -1,0 +1,22 @@
+<svg width="130" height="150" viewBox="275 93 130 150" xmlns="http://www.w3.org/2000/svg">
+    <!-- Glow -->
+    <polygon points="340,96 402,132 402,204 340,240 278,204 278,132" fill="none" stroke="#2d7a3a" stroke-width="6"
+        opacity="0.08" stroke-linejoin="round" />
+
+    <!-- Hex fill -->
+    <polygon points="340,104 396,137 396,203 340,236 284,203 284,137" fill="#1a4d24" />
+
+    <!-- Hex border -->
+    <polygon points="340,104 396,137 396,203 340,236 284,203 284,137" fill="none" stroke="#2d7a3a" stroke-width="2.5"
+        stroke-linejoin="round" />
+
+    <!-- Cross -->
+    <rect x="334" y="148" width="12" height="44" rx="3" fill="#7ecb6f" />
+    <rect x="318" y="164" width="44" height="12" rx="3" fill="#7ecb6f" />
+
+    <!-- Leaf -->
+    <path d="M352,153 Q362,143 368,149 Q362,162 352,158 Z" fill="#a8e09c" />
+
+    <!-- Leaf vein -->
+    <path d="M352,156 Q360,150 366,149" fill="none" stroke="#2d7a3a" stroke-width="1" stroke-linecap="round" />
+</svg>

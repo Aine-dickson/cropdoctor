@@ -1,0 +1,8 @@
+<svg width="256" height="72" viewBox="212 246 256 72" xmlns="http://www.w3.org/2000/svg">
+  <!-- ── WORDMARK ── -->
+  <text x="340" y="282" text-anchor="middle" font-size="36" font-weight="600" fill="#1a1f1b" letter-spacing="-0.5" style="fill:rgb(26, 31, 27);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Sora, &quot;Helvetica Neue&quot;, sans-serif;font-size:36px;font-weight:600;text-anchor:middle;dominant-baseline:auto">Crop<tspan fill="#2d7a3a" style="fill:rgb(45, 122, 58);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Sora, &quot;Helvetica Neue&quot;, sans-serif;font-size:36px;font-weight:600;text-anchor:middle;dominant-baseline:auto">Doctor</tspan></text>
+
+  <!-- Tagline -->
+  <text x="340" y="308" text-anchor="middle" font-size="13" fill="#6b7a6d" letter-spacing="1.5" style="fill:rgb(107, 122, 109);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Sora, &quot;Helvetica Neue&quot;, sans-serif;font-size:13px;font-weight:400;text-anchor:middle;dominant-baseline:auto">DETECT · TREAT · GROW</text>
+
+</svg>

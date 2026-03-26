@@ -1,6 +1,6 @@
 <template>
     <div class="view">
-        <AppTopBar title="Scan your crop" />
+        <AppTopBar title="Scan" />
 
         <div class="page">
             <div class="hero">

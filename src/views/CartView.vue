@@ -1,6 +1,6 @@
 <template>
     <div class="view">
-        <AppTopBar title="Your cart" :show-back="true" back-to="/results" />
+        <AppTopBar title="Cart" :show-back="true" back-to="/results" />
 
         <div class="page">
             <div v-if="!cart.items.length" class="empty-state">
