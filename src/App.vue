@@ -1,11 +1,20 @@
 <template>
-    <router-view />
+    <div class="app-shell" :class="{ 'has-bottom-bar': isTauri }">
+        <router-view />
+        <BottomTabBar v-if="isTauri" />
+    </div>
 </template>
+
+<script setup>
+    import BottomTabBar from '@/components/BottomTabBar.vue'
+    import { usePlatform } from '@/composables/usePlatform'
+
+    const { isTauri } = usePlatform()
+</script>
 
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600&family=Lora:ital,wght@0,400;0,600;1,400&display=swap');
 
-    /* ── Reset ── */
     *,
     *::before,
     *::after {
@@ -14,7 +23,6 @@
         padding: 0;
     }
 
-    /* ── Tokens ── */
     :root {
         --bg: #f7f5ef;
         --surface: #ffffff;
@@ -37,7 +45,12 @@
         -webkit-font-smoothing: antialiased;
     }
 
-    /* ── Global buttons (outlined by default, filled on active) ── */
+    /* Extra bottom padding when bottom bar is present */
+    .has-bottom-bar .page {
+        padding-bottom: 120px !important;
+    }
+
+    /* ── Global buttons — outlined at rest, filled on press ── */
     .btn-primary {
         width: 100%;
         padding: 17px;
@@ -77,7 +90,6 @@
         font-size: 14px;
         font-weight: 500;
         cursor: pointer;
-        transition: border-color 0.15s, color 0.15s;
         -webkit-tap-highlight-color: transparent;
         touch-action: manipulation;
     }
@@ -131,7 +143,6 @@
         }
     }
 
-    /* ── Fade transition ── */
     .fade-enter-active,
     .fade-leave-active {
         transition: opacity 0.2s;
@@ -142,3 +153,4 @@
         opacity: 0;
     }
 </style>
+   
