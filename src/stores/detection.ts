@@ -14,6 +14,7 @@ interface DetectionResult {
     disease: string
     confidence: number
     severity: string
+    healthy?: boolean
     advice?: Advice
     products?: MedicineProduct[]
 }
@@ -64,13 +65,21 @@ export const useDetectionStore = defineStore('detection', () => {
 
         try {
             const det = await identifyDisease(imageBase64.value, context)
-            const enrichment = await enrichDiseaseDiagnosis({ disease: det.disease, plant: det.plant })
-            det.advice = {
-                summary: enrichment.summary,
-                steps: enrichment.steps,
-                aiUnavailable: enrichment.aiUnavailable,
+            if (det.healthy) {
+                det.advice = {
+                    summary: 'The plant appears healthy. No treatment is needed.',
+                    steps: [],
+                }
+                det.products = []
+            } else {
+                const enrichment = await enrichDiseaseDiagnosis({ disease: det.disease, plant: det.plant })
+                det.advice = {
+                    summary: enrichment.summary,
+                    steps: enrichment.steps,
+                    aiUnavailable: enrichment.aiUnavailable,
+                }
+                det.products = getProductsForDisease(det.disease, enrichment.searchTerms)
             }
-            det.products = getProductsForDisease(det.disease, enrichment.searchTerms)
             result.value = det
             return true
         } catch (err: unknown) {

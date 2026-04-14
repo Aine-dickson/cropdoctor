@@ -40,6 +40,7 @@ export async function assessPlantHealth(
     disease: string
     confidence: number
     severity: string
+    healthy?: boolean
 }> {
     return edgeJson('/plant/health-assessment', {
         imageBase64: base64,
@@ -65,6 +66,7 @@ export async function assessPlantHealthWithContext(
     disease: string
     confidence: number
     severity: string
+    healthy?: boolean
 }> {
     return edgeJson('/plant/health-assessment', {
         imageBase64: base64,

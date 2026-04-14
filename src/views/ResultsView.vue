@@ -10,10 +10,11 @@
             <div class="disease-card">
                 <div class="disease-thumb">
                     <img :src="detection.previewUrl" alt="Scanned crop" class="thumb-img" />
-                    <span class="sev-badge" :class="sevClass">{{ detection.result.severity }}</span>
+                    <span class="sev-badge" :class="sevClass">{{ detection.result.healthy ? 'Healthy' :
+                        detection.result.severity }}</span>
                 </div>
                 <div class="disease-info">
-                    <p class="info-label">Detected disease</p>
+                    <p class="info-label">{{ detection.result.healthy ? 'Healthy plant' : 'Detected disease' }}</p>
                     <h2 class="disease-name">{{ detection.result.disease }}</h2>
                     <p class="disease-plant">on {{ detection.result.plant }}</p>
                     <div class="conf-row">
@@ -26,14 +27,17 @@
             </div>
 
             <div class="section-card">
-                <h3 class="section-title">{{ detection.result.advice?.aiUnavailable ? 'Detected disease' : 'What this means' }}</h3>
+                <h3 class="section-title">{{ detection.result.healthy ? 'Healthy plant' :
+                    detection.result.advice?.aiUnavailable ? 'Detected disease' : 'What this means' }}</h3>
                 <p class="advice-summary">{{ detection.result.advice?.summary }}</p>
                 <ul class="advice-steps"
-                    v-if="detection.result.advice?.steps?.length && !detection.result.advice?.aiUnavailable">
+                    v-if="detection.result.advice?.steps?.length && !detection.result.advice?.aiUnavailable && !detection.result.healthy">
                     <li v-for="(s, i) in detection.result.advice?.steps" :key="i">
                         <span class="step-num">{{ i + 1 }}</span><span>{{ s }}</span>
                     </li>
                 </ul>
+                <p v-if="detection.result.healthy" class="ai-unavailable-note">No treatment is needed for a healthy
+                    plant.</p>
                 <p v-else-if="detection.result.advice?.aiUnavailable" class="ai-unavailable-note">Browse or search for
                     medicines matching this disease.</p>
             </div>
@@ -42,11 +46,16 @@
                 <div class="bridge-head">
                     <span class="bridge-icon">💊</span>
                     <div>
-                        <h3 class="bridge-title">Recommended treatments</h3>
-                        <p class="bridge-sub">Products that treat {{ detection.result.disease }}</p>
+                        <h3 class="bridge-title">{{ detection.result.healthy ? 'No treatment needed' : 'Recommended
+                            treatments' }}</h3>
+                        <p class="bridge-sub">{{ detection.result.healthy ? 'The plant appears healthy' : 'Products that
+                            treat ' + detection.result.disease }}</p>
                     </div>
                 </div>
-                <p v-if="!detection.result.products?.length" class="empty-catalogue-msg">
+                <p v-if="detection.result.healthy" class="empty-catalogue-msg">
+                    The scan suggests a healthy plant, so no medicine is needed.
+                </p>
+                <p v-else-if="!detection.result.products?.length" class="empty-catalogue-msg">
                     We do not have a direct catalogue match for this disease yet. Use Browse or Search for related
                     medicines, or refine the diagnosis.
                 </p>
@@ -120,6 +129,7 @@
     const diseaseOptions = ['Late Blight', 'Early Blight', 'Leaf Spot', 'Powdery Mildew', 'Downy Mildew', 'Rust', 'Anthracnose', 'Root Rot', 'Bacterial Wilt', 'Mosaic Virus', 'Yellow Leaf Curl']
 
     const sevClass = computed(() => {
+        if (detection.result?.healthy) return 'sev-healthy'
         const s = detection.result?.severity?.toLowerCase()
         return s === 'high' ? 'sev-high' : s === 'medium' ? 'sev-med' : 'sev-low'
     })
@@ -217,6 +227,11 @@
     .sev-low {
         background: var(--accent-lt);
         color: var(--accent);
+    }
+
+    .sev-healthy {
+        background: #e9f8ef;
+        color: #2d7a3a;
     }
 
     .disease-info {

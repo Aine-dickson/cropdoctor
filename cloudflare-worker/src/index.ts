@@ -10,6 +10,7 @@ type PlantHealthAssessmentResponse = {
     disease: string
     confidence: number
     severity: string
+    healthy?: boolean
 }
 
 type PlantHealthAssessmentRequest = {
@@ -148,8 +149,16 @@ async function assessPlantHealth(
 
     const cropTop = data.result?.crop?.suggestions?.[0]
     const diseaseTop = data.result?.disease?.suggestions?.[0]
-    if (!diseaseTop) {
-        throw new Error('No disease detected. Try a clearer photo.')
+    const healthyDetected = isHealthySuggestion(diseaseTop?.name || diseaseTop?.scientific_name) || !diseaseTop
+
+    if (healthyDetected) {
+        return {
+            plant: cropTop?.name || cropTop?.scientific_name || 'Unknown plant',
+            disease: 'Healthy plant',
+            confidence: Math.round((cropTop?.probability || 1) * 100),
+            severity: 'None',
+            healthy: true,
+        }
     }
 
     return {
@@ -256,6 +265,11 @@ function normalizeArray(input: unknown, limit: number, fallback: string[]) {
 function stringOrFallback(value: unknown, fallback: string) {
     const text = String(value ?? '').trim()
     return text || fallback
+}
+
+function isHealthySuggestion(value: string | undefined) {
+    const text = String(value ?? '').trim().toLowerCase()
+    return text.includes('healthy') || text.includes('no disease') || text === 'health' || text === 'healthy plant'
 }
 
 function fallbackSummary(disease: string) {

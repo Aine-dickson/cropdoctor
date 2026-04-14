@@ -107,8 +107,16 @@ async function assessPlantHealth(imageBase64, env, options = {}) {
     const data = await response.json()
     const cropTop = data?.result?.crop?.suggestions?.[0]
     const diseaseTop = data?.result?.disease?.suggestions?.[0]
-    if (!diseaseTop) {
-        throw new Error('No disease detected. Try a clearer photo.')
+    const healthyDetected = isHealthySuggestion(diseaseTop?.name || diseaseTop?.scientific_name) || !diseaseTop
+
+    if (healthyDetected) {
+        return {
+            plant: cropTop?.name || cropTop?.scientific_name || 'Unknown plant',
+            disease: 'Healthy plant',
+            confidence: Math.round(((cropTop?.probability || 1) * 100)),
+            severity: 'None',
+            healthy: true,
+        }
     }
 
     return {
@@ -261,6 +269,16 @@ function normalizeKindwiseDatetime(value) {
 
     // Kindwise expects second precision, e.g. 2026-04-14T16:04:24Z
     return date.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
+function isHealthySuggestion(value) {
+    const text = String(value || '').trim().toLowerCase()
+    return text.includes('healthy') || text.includes('no disease') || text === 'health' || text === 'healthy plant'
+}
+
+function isHealthySuggestion(value) {
+    const text = String(value || '').trim().toLowerCase()
+    return text.includes('healthy') || text.includes('no disease') || text === 'health' || text === 'healthy plant'
 }
 
 function jsonResponse(body, status = 200) {
