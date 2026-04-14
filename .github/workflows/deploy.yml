@@ -35,6 +35,10 @@ jobs:
 
       - name: Type-check and build
         run: bun run type-check && bun run build-only
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY }}
+          VITE_EDGE_API_BASE_URL: ${{ vars.VITE_EDGE_API_BASE_URL }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
