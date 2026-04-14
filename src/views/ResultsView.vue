@@ -46,10 +46,8 @@
                 <div class="bridge-head">
                     <span class="bridge-icon">💊</span>
                     <div>
-                        <h3 class="bridge-title">{{ detection.result.healthy ? 'No treatment needed' : 'Recommended
-                            treatments' }}</h3>
-                        <p class="bridge-sub">{{ detection.result.healthy ? 'The plant appears healthy' : 'Products that
-                            treat ' + detection.result.disease }}</p>
+                        <h3 class="bridge-title">{{ detection.result.healthy ? 'No treatment needed' : 'Recommended treatments' }}</h3>
+                        <p class="bridge-sub">{{ detection.result.healthy ? 'The plant appears healthy' : 'Products that treat ' + detection.result.disease }}</p>
                     </div>
                 </div>
                 <p v-if="detection.result.healthy" class="empty-catalogue-msg">
