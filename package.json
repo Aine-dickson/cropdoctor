@@ -12,8 +12,10 @@
     "format": "oxfmt src/"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
     "@supabase/supabase-js": "^2.100.0",
     "pinia": "^3.0.4",
+    "pinia-plugin-persistedstate": "^4.7.1",
     "vue": "beta",
     "vue-router": "^5.0.4"
   },

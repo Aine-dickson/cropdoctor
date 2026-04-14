@@ -44,6 +44,8 @@
                 <span v-else class="dots"><span></span><span></span><span></span></span>
             </button>
 
+            <p v-if="scanNotice" class="notice-msg">{{ scanNotice }}</p>
+
             <p v-if="detection.error" class="error-msg">{{ detection.error }}</p>
 
             <!-- Tips -->
@@ -65,12 +67,14 @@
     import AppTopBar from '@/components/AppTopBar.vue'
     import { useDetectionStore } from '@/stores/detection'
     import { useAuthStore } from '@/stores/auth'
+    import { LocationPermissionError, getScanContext } from '@/composables/useScanContext'
 
     const auth = useAuthStore()
     const router = useRouter()
     const detection = useDetectionStore()
     const fileInput = ref(null)
     const dragging = ref(false)
+    const scanNotice = ref('')
 
     function onFileChange(e) { loadFile(e.target.files[0]) }
     function onDrop(e) { dragging.value = false; loadFile(e.dataTransfer.files[0]) }
@@ -86,8 +90,29 @@
     function resetImage() { detection.setImage(null, null) }
 
     async function handleScan() {
-        const ok = await detection.runScan()
-        if (ok) router.push('/results')
+        scanNotice.value = ''
+
+        try {
+            const context = await getScanContext()
+            const ok = await detection.runScan(context)
+            if (ok && auth.isLoggedIn && detection.result) {
+                const severity = detection.result.severity?.toLowerCase()
+                await auth.saveDetection({
+                    disease: detection.result.disease,
+                    plant: detection.result.plant,
+                    confidence: detection.result.confidence,
+                    severity: severity === 'high' || severity === 'medium' || severity === 'low' ? severity : undefined,
+                })
+            }
+            if (ok) router.push('/results')
+        } catch (error) {
+            if (error instanceof LocationPermissionError) {
+                scanNotice.value = error.message
+                return
+            }
+
+            detection.error = error instanceof Error ? error.message : 'Could not access location. Tap Analyse crop again.'
+        }
     }
 </script>
 
@@ -216,6 +241,17 @@
         font-size: 13px;
         color: var(--danger);
         text-align: center;
+    }
+
+    .notice-msg {
+        font-size: 13px;
+        color: var(--text);
+        text-align: center;
+        background: var(--surface2);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px 14px;
+        line-height: 1.55;
     }
 
     /* Tips */

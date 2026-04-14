@@ -1,0 +1,13 @@
+name = "coffe-clinic-edge-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-04-14"
+
+[vars]
+# Set these in the Cloudflare dashboard or via wrangler secret put.
+# PLANT_ID_KEY = ""
+# ANTHROPIC_API_KEY = ""
+
+# Recommended deployment steps:
+# 1. wrangler secret put PLANT_ID_KEY
+# 2. wrangler secret put ANTHROPIC_API_KEY
+# 3. wrangler deploy
