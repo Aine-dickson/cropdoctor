@@ -128,6 +128,16 @@ async function assessPlantHealth(imageBase64, env, options = {}) {
 }
 
 async function enrichDiseaseDiagnosis(input, env) {
+    if (isHealthySuggestion(input.disease)) {
+        return {
+            summary: 'The plant appears healthy. No treatment advisory is needed.',
+            steps: [],
+            relatedDiseases: [],
+            searchTerms: [],
+            healthy: true,
+        }
+    }
+
     const prompt = [
         'You are an agricultural advisor for Ugandan smallholder farmers.',
         'Respond ONLY with JSON, no markdown.',

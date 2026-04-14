@@ -65,7 +65,12 @@ export const useDetectionStore = defineStore('detection', () => {
 
         try {
             const det = await identifyDisease(imageBase64.value, context)
-            if (det.healthy) {
+            const healthy = Boolean(det.healthy) || isHealthyLabel(det.disease)
+            det.healthy = healthy
+            det.disease = healthy ? 'Healthy plant' : det.disease
+            det.severity = healthy ? 'None' : det.severity
+
+            if (healthy) {
                 det.advice = {
                     summary: 'The plant appears healthy. No treatment is needed.',
                     steps: [],
@@ -94,17 +99,24 @@ export const useDetectionStore = defineStore('detection', () => {
         return findMedicinesByDisease(disease, searchTerms)
     }
 
+    function isHealthyLabel(value: string | undefined) {
+        const text = String(value ?? '').trim().toLowerCase()
+        return text.includes('healthy') || text.includes('no disease') || text === 'health'
+    }
+
     async function identifyDisease(
         base64: string,
         context: { latitude?: number; longitude?: number; datetime?: string } = {},
     ): Promise<DetectionResult> {
         const assessment = await assessPlantHealth(base64, context)
+        const healthy = Boolean(assessment.healthy) || isHealthyLabel(assessment.disease)
 
         return {
             plant: assessment.plant,
-            disease: assessment.disease,
+            disease: healthy ? 'Healthy plant' : assessment.disease,
             confidence: assessment.confidence,
-            severity: assessment.severity,
+            severity: healthy ? 'None' : assessment.severity,
+            healthy,
         }
     }
 
