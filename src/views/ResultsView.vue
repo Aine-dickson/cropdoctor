@@ -1,6 +1,6 @@
 <template>
     <div class="view">
-        <AppTopBar title="Results" :show-back="true" back-to="/" />
+        <AppTopBar title="Results" :show-back="true" />
 
         <div v-if="!detection.result" class="page center-msg">
             <p>No results yet. <router-link to="/">Scan a crop</router-link></p>
@@ -14,7 +14,7 @@
                         detection.result.severity }}</span>
                 </div>
                 <div class="disease-info">
-                    <p class="info-label">{{ isHealthyResult ? 'Healthy plant' : 'Detected disease' }}</p>
+                    <p class="info-label">{{ diagnosisLabel }}</p>
                     <h2 class="disease-name">{{ detection.result.disease }}</h2>
                     <p class="disease-plant">on {{ detection.result.plant }}</p>
                     <div class="conf-row">
@@ -26,18 +26,36 @@
                 </div>
             </div>
 
+            <div v-if="showUncertaintyPanel" class="uncertainty-card">
+                <h3 class="uncertainty-title">Uncertain diagnosis</h3>
+                <p class="uncertainty-sub">
+                    {{ uncertaintyReason }}
+                </p>
+                <div v-if="detection.result.possibleDiseases?.length" class="uncertainty-list">
+                    <div v-for="candidate in detection.result.possibleDiseases" :key="candidate.name"
+                        class="uncertainty-item">
+                        <span>{{ candidate.name }}</span>
+                        <span>{{ candidate.confidence }}%</span>
+                    </div>
+                </div>
+                <button class="btn-secondary" @click="router.push('/')">Retake photo</button>
+            </div>
+
             <div class="section-card">
-                <h3 class="section-title">{{ isHealthyResult ? 'Healthy plant' :
+                <h3 class="section-title">{{ isHealthyStrongResult ? 'Healthy plant' : isHealthyUncertainResult ?
+                    'Uncertain healthy result' :
                     detection.result.advice?.aiUnavailable ? 'Detected disease' : 'What this means' }}</h3>
                 <p class="advice-summary">{{ detection.result.advice?.summary }}</p>
                 <ul class="advice-steps"
-                    v-if="detection.result.advice?.steps?.length && !detection.result.advice?.aiUnavailable && !isHealthyResult">
+                    v-if="detection.result.advice?.steps?.length && !detection.result.advice?.aiUnavailable && !isHealthyStrongResult && !isHealthyUncertainResult">
                     <li v-for="(s, i) in detection.result.advice?.steps" :key="i">
                         <span class="step-num">{{ i + 1 }}</span><span>{{ s }}</span>
                     </li>
                 </ul>
-                <p v-if="isHealthyResult" class="ai-unavailable-note">No treatment is needed for a healthy
+                <p v-if="isHealthyStrongResult" class="ai-unavailable-note">No treatment is needed for a healthy
                     plant.</p>
+                <p v-else-if="isHealthyUncertainResult" class="ai-unavailable-note">Retake a clearer photo before
+                    applying treatment.</p>
                 <p v-else-if="detection.result.advice?.aiUnavailable" class="ai-unavailable-note">Browse or search for
                     medicines matching this disease.</p>
             </div>
@@ -46,14 +64,20 @@
                 <div class="bridge-head">
                     <span class="bridge-icon">💊</span>
                     <div>
-                        <h3 class="bridge-title">{{ isHealthyResult ? 'No treatment needed' : 'Recommended treatments'
+                        <h3 class="bridge-title">{{ isHealthyStrongResult ? 'No treatment needed' :
+                            isHealthyUncertainResult ? 'Hold treatment for now' : 'Recommended treatments'
                             }}</h3>
-                        <p class="bridge-sub">{{ isHealthyResult ? 'The plant appears healthy' : 'Products that treat '
+                        <p class="bridge-sub">{{ isHealthyStrongResult ? 'The plant appears healthy' :
+                            isHealthyUncertainResult ? 'Diagnosis is uncertain. Confirm with a retake first.' :
+                                'Products that treat '
                             + detection.result.disease }}</p>
                     </div>
                 </div>
-                <p v-if="isHealthyResult" class="empty-catalogue-msg">
+                <p v-if="isHealthyStrongResult" class="empty-catalogue-msg">
                     The scan suggests a healthy plant, so no medicine is needed.
+                </p>
+                <p v-else-if="isHealthyUncertainResult" class="empty-catalogue-msg">
+                    This result is uncertain. Please retake the photo before buying or applying treatment.
                 </p>
                 <p v-else-if="!detection.result.products?.length" class="empty-catalogue-msg">
                     We do not have a direct catalogue match for this disease yet. Use Browse or Search for related
@@ -127,14 +151,39 @@
     const correction = ref('')
     const feedbackSent = ref(false)
     const diseaseOptions = ['Late Blight', 'Early Blight', 'Leaf Spot', 'Powdery Mildew', 'Downy Mildew', 'Rust', 'Anthracnose', 'Root Rot', 'Bacterial Wilt', 'Mosaic Virus', 'Yellow Leaf Curl']
+    const diagnosisState = computed(() => detection.result?.diagnosisState ?? '')
+
+    const isHealthyStrongResult = computed(() => diagnosisState.value === 'healthy_strong')
+    const isHealthyUncertainResult = computed(() => diagnosisState.value === 'healthy_uncertain')
+    const isCompetingDiseaseResult = computed(() => diagnosisState.value === 'disease_competing_same_family' || diagnosisState.value === 'disease_competing_mixed')
 
     const isHealthyResult = computed(() => {
         const disease = String(detection.result?.disease ?? '').toLowerCase()
-        return Boolean(detection.result?.healthy) || disease.includes('healthy') || disease.includes('no disease')
+        return isHealthyStrongResult.value || isHealthyUncertainResult.value || Boolean(detection.result?.healthy) || disease.includes('healthy') || disease.includes('no disease')
+    })
+
+    const diagnosisLabel = computed(() => {
+        if (isHealthyStrongResult.value) return 'Healthy plant'
+        if (isHealthyUncertainResult.value) return 'Uncertain healthy result'
+        if (isCompetingDiseaseResult.value) return 'Possible diseases'
+        return 'Detected disease'
+    })
+
+    const showUncertaintyPanel = computed(() => isHealthyUncertainResult.value || isCompetingDiseaseResult.value)
+
+    const uncertaintyReason = computed(() => {
+        if (isHealthyUncertainResult.value) {
+            return 'The model picked healthy as top guess, but confidence is low and disease signals are competing.'
+        }
+        if (diagnosisState.value === 'disease_competing_same_family') {
+            return 'Top disease candidates are close and from similar disease families, so symptoms may overlap.'
+        }
+        return 'Top disease candidates are close, so the diagnosis is uncertain and should be confirmed with a retake.'
     })
 
     const sevClass = computed(() => {
-        if (isHealthyResult.value) return 'sev-healthy'
+        if (isHealthyStrongResult.value) return 'sev-healthy'
+        if (isHealthyUncertainResult.value) return 'sev-uncertain'
         const s = detection.result?.severity?.toLowerCase()
         return s === 'high' ? 'sev-high' : s === 'medium' ? 'sev-med' : 'sev-low'
     })
@@ -237,6 +286,50 @@
     .sev-healthy {
         background: #e9f8ef;
         color: #2d7a3a;
+    }
+
+    .sev-uncertain {
+        background: #fff3e8;
+        color: #b46a2a;
+    }
+
+    .uncertainty-card {
+        background: #fff9f2;
+        border: 1px solid #f1d8bf;
+        border-radius: 18px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .uncertainty-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #8f5321;
+    }
+
+    .uncertainty-sub {
+        font-size: 13px;
+        color: #6d4a2f;
+        line-height: 1.5;
+    }
+
+    .uncertainty-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .uncertainty-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #fff;
+        border: 1px solid #efdac6;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 13px;
     }
 
     .disease-info {

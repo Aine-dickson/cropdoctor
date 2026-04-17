@@ -42,10 +42,17 @@
                     </div>
                     <div class="profile-info">
                         <h2 class="profile-name">{{ auth.profile?.name || 'Farmer' }}</h2>
-                        <p class="profile-phone">+256 {{ auth.session?.user?.phone?.replace('+256', '') }}</p>
+                        <p class="profile-contact" v-if="contactValue">{{ contactLabel }}: {{ contactValue }}</p>
                         <p class="profile-address" v-if="auth.profile?.address">{{ auth.profile.address }}</p>
+                        <p class="profile-region" v-if="auth.profile?.region">Region: {{ auth.profile.region }}</p>
                     </div>
-                    <button class="edit-btn" @click="editing = true">Edit</button>
+                    <button class="edit-btn" @click="editing = true" aria-label="Edit profile">
+                        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none"
+                            viewBox="0 0 24 24" class="edit-icon">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="m4.988 19.012 5.41-5.41m2.366-6.424 4.058 4.058-2.03 5.41L5.3 20 4 18.701l3.355-9.494 5.41-2.029Zm4.626 4.625L12.197 6.61 14.807 4 20 9.194l-2.61 2.61Z" />
+                        </svg>
+                    </button>
                 </div>
 
                 <!-- Edit form -->
@@ -59,10 +66,14 @@
                             <p class="field-label">Delivery address</p>
                             <input class="field" v-model="editForm.address" placeholder="Village / town / district" />
                         </div>
+                        <div class="field-group">
+                            <p class="field-label">Region</p>
+                            <input class="field" v-model="editForm.region" placeholder="Central / Eastern / Northern / Western" />
+                        </div>
                         <div class="edit-actions">
                             <button class="btn-secondary" @click="cancelEdit">Cancel</button>
                             <button class="btn-primary" style="flex:1" :disabled="saving" @click="handleSave">
-                                <span v-if="!saving">Save changes</span>
+                                <span v-if="!saving">Save</span>
                                 <span v-else class="dots"><span></span><span></span><span></span></span>
                             </button>
                         </div>
@@ -124,8 +135,8 @@
                         <div class="history-item" v-for="d in detections" :key="d.id">
                             <div class="scan-dot" :class="d.severity?.toLowerCase()"></div>
                             <div class="history-info">
-                                <p class="history-title">{{ d.disease }}</p>
-                                <p class="history-meta">{{ d.plant }} · {{ formatDate(d.created_at) }}</p>
+                                <p class="history-title capitalize">{{ d.disease }}</p>
+                                <p class="history-meta capitalize">{{ d.plant }} · {{ formatDate(d.created_at) }}</p>
                             </div>
                             <span class="conf-pill">{{ d.confidence }}%</span>
                         </div>
@@ -154,12 +165,15 @@
     const orders = ref([])
     const detections = ref([])
 
-    const editForm = ref({ name: '', address: '' })
+    const editForm = ref({ name: '', address: '', region: '' })
 
     const initials = computed(() => {
         const name = auth.profile?.name || 'F'
         return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     })
+
+    const contactValue = computed(() => auth.contactValue)
+    const contactLabel = computed(() => auth.contactLabel)
 
     const uniqueDiseases = computed(() => new Set(detections.value.map(d => d.disease)).size)
 
@@ -167,11 +181,12 @@
         { icon: '📦', title: 'Track your orders', desc: 'See order status and history in one place' },
         { icon: '🔬', title: 'Scan history', desc: 'Review past detections and treatments' },
         { icon: '📍', title: 'Save your address', desc: 'Faster checkout every time' },
+        { icon: '🗺️', title: 'Set your region', desc: 'Match nearby suppliers' },
         { icon: '⭐', title: 'Leave product reviews', desc: 'Help other farmers choose the right treatment' },
     ]
 
     function cancelEdit() {
-        editForm.value = { name: auth.profile?.name || '', address: auth.profile?.address || '' }
+        editForm.value = { name: auth.profile?.name || '', address: auth.profile?.address || '', region: auth.profile?.region || '' }
         editing.value = false
     }
 
@@ -203,10 +218,19 @@
 
     onMounted(() => {
         if (auth.profile) {
-            editForm.value = { name: auth.profile.name || '', address: auth.profile.address || '' }
+            editForm.value = { name: auth.profile.name || '', address: auth.profile.address || '', region: auth.profile.region || '' }
         }
         loadHistory()
     })
+
+    watch(
+        () => auth.profile,
+        (profile) => {
+            if (!profile || editing.value) return
+            editForm.value = { name: profile.name || '', address: profile.address || '', region: profile.region || '' }
+        },
+        { deep: true, immediate: true },
+    )
 
     watch(() => auth.isLoggedIn, (v) => { if (v) loadHistory() })
 </script>
@@ -304,10 +328,12 @@
         display: flex;
         align-items: center;
         gap: 14px;
+        position: relative;
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 20px;
         padding: 18px;
+        padding-right: 72px;
     }
 
     .avatar {
@@ -353,22 +379,30 @@
     }
 
     .edit-btn {
-        font-family: 'Sora', sans-serif;
-        font-size: 13px;
-        font-weight: 600;
+        position: absolute;
+        top: 12px;
+        right: 12px;
         color: var(--accent);
         background: var(--accent-lt);
         border: 2px solid var(--accent);
-        border-radius: 10px;
-        padding: 8px 14px;
+        border-radius: 12px;
+        width: 44px;
+        height: 44px;
+        padding: 0;
         cursor: pointer;
-        flex-shrink: 0;
         -webkit-tap-highlight-color: transparent;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .edit-btn:active {
         background: var(--accent);
         color: #fff;
+    }
+
+    .edit-icon {
+        display: block;
     }
 
     /* Edit form */
@@ -405,6 +439,7 @@
         border-radius: 12px;
         padding: 14px;
         color: var(--text);
+        appearance: none;
         -webkit-appearance: none;
         transition: border-color 0.2s;
     }

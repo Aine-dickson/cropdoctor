@@ -1,12 +1,12 @@
 <template>
     <div class="view">
-        <AppTopBar title="Your cart" :show-back="true" back-to="/results" />
+        <AppTopBar title="Your cart" :show-back="true" />
 
         <div class="page">
             <div v-if="!cart.items.length" class="empty-state">
                 <span class="empty-icon">🛒</span>
                 <p class="empty-msg">Your cart is empty</p>
-                <button class="btn-secondary" @click="router.push('/results')">Back to results</button>
+                <button class="btn-secondary" @click="goBack(router)">Back</button>
             </div>
 
             <template v-else>
@@ -33,13 +33,13 @@
                     <div class="summary-row"><span>Subtotal</span><span>UGX {{ cart.subtotal.toLocaleString() }}</span>
                     </div>
                     <div class="summary-row"><span>Delivery</span><span>UGX {{ cart.DELIVERY_FEE.toLocaleString()
-                    }}</span></div>
+                            }}</span></div>
                     <div class="summary-row total"><span>Total</span><span>UGX {{ cart.total.toLocaleString() }}</span>
                     </div>
                 </div>
 
                 <button class="btn-primary" @click="router.push('/checkout')">Proceed to checkout</button>
-                <button class="btn-secondary" @click="router.push('/results')">Add more products</button>
+                <button class="btn-secondary" @click="goBack(router)">Add more products</button>
             </template>
         </div>
     </div>
@@ -49,6 +49,7 @@
     import { useRouter } from 'vue-router'
     import AppTopBar from '@/components/AppTopBar.vue'
     import { useCartStore } from '@/stores/cart'
+    import { goBack } from '@/lib/navigationHistory'
     import { getMedicineStockLabel, getLowStockBadge } from '@/lib/medicineCatalog'
 
     const router = useRouter()

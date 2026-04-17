@@ -8,15 +8,22 @@ type MaybeError = { message?: string } | string | null
 interface Profile {
     name?: string
     address?: string
+    region?: string
     phone?: string
+    email?: string
     [key: string]: unknown
 }
 
 interface OrderInput {
-    items: unknown[]
+    items: Array<Record<string, unknown>>
+    subtotal: number
+    deliveryFee: number
     total: number
     location: string
-    payment: 'mtn' | 'airtel' | 'cod'
+    paymentMethod: 'mtn' | 'airtel' | 'cod'
+    paymentStatus: 'pending' | 'paid' | 'failed' | 'refunded'
+    momoNumber?: string | null
+    notes?: string | null
 }
 
 interface DetectionInput {
@@ -32,17 +39,9 @@ interface ReviewInput {
     comment: string
 }
 
-interface MockSession {
-    user: {
-        id: string
-        email?: string
-        phone?: string
-    }
-}
-
 export const useAuthStore = defineStore('auth', () => {
     const otpChannel = import.meta.env.VITE_OTP_CHANNEL === 'phone' ? 'phone' : 'email'
-    const session = ref<Session | MockSession | null>(null)
+    const session = ref<Session | null>(null)
     const profile = ref<Profile | null>(null)
     const loading = ref(true)
 
@@ -50,16 +49,26 @@ export const useAuthStore = defineStore('auth', () => {
     const isGuest = computed(() => !session.value)
     const userId = computed(() => session.value?.user?.id ?? null)
     const displayName = computed(() => profile.value?.name ?? 'Guest')
+    const contactType = computed(() => {
+        if (otpChannel === 'phone') return 'phone'
+        return 'email'
+    })
+    const contactValue = computed(() => {
+        const sessionPhone = String(session.value?.user?.phone ?? '').trim()
+        const sessionEmail = String(session.value?.user?.email ?? '').trim()
+        const profilePhone = String(profile.value?.phone ?? '').trim()
+        const profileEmail = String(profile.value?.email ?? '').trim()
+
+        if (contactType.value === 'phone') return sessionPhone || profilePhone || ''
+        return sessionEmail || profileEmail || ''
+    })
+    const contactLabel = computed(() => (contactValue.value ? (contactType.value === 'phone' ? 'Phone' : 'Email') : 'Contact'))
 
     async function init() {
-        if (!supabase) {
-            loading.value = false
-            return
-        }
-
         const { data } = await supabase.auth.getSession()
         session.value = data.session ?? null
         if (session.value) await fetchProfile()
+        else profile.value = null
 
         supabase.auth.onAuthStateChange(async (_event: AuthChangeEvent, s: Session | null) => {
             session.value = s
@@ -71,7 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function fetchProfile() {
-        if (!supabase || !userId.value) return
+        if (!userId.value) return
         const { data } = await supabase
             .from('profiles')
             .select('*')
@@ -81,7 +90,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function saveProfile(updates: Record<string, unknown>) {
-        if (!supabase || !userId.value) return { error: 'Not logged in' as const }
+        if (!userId.value) return { error: 'Not logged in' as const }
         const { error } = await supabase
             .from('profiles')
             .upsert({ id: userId.value, ...updates, updated_at: new Date().toISOString() })
@@ -91,10 +100,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function sendOtp(identifier: string, mode: 'login' | 'signup' = 'login'): Promise<{ error: MaybeError }> {
-        if (!supabase) {
-            await delay(800)
-            return { error: null }
-        }
         const shouldCreateUser = mode === 'signup'
         const { error } =
             otpChannel === 'phone'
@@ -114,19 +119,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function verifyOtp(identifier: string, token: string): Promise<{ error: MaybeError; isNew?: boolean }> {
-        if (!supabase) {
-            await delay(900)
-            if (token !== '123456') return { error: { message: 'Invalid code. Use 123456 in mock mode.' } }
-            session.value = {
-                user: {
-                    id: 'mock-user-id',
-                    ...(otpChannel === 'phone' ? { phone: identifier } : { email: identifier }),
-                },
-            }
-            profile.value = null
-            return { error: null, isNew: true }
-        }
-
         const { data, error } =
             otpChannel === 'phone'
                 ? await supabase.auth.verifyOtp({ phone: identifier, token, type: 'sms' })
@@ -149,25 +141,38 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function signOut() {
-        if (supabase) await supabase.auth.signOut()
+        await supabase.auth.signOut()
         session.value = null
         profile.value = null
     }
 
     async function saveOrder(order: OrderInput) {
-        if (!supabase || !userId.value) return
+        if (!userId.value) return
+        const items = order.items.map((item) => ({
+            product_id: Number(item.product_id ?? item.id),
+            name: String(item.name ?? ''),
+            emoji: String(item.emoji ?? '🟡'),
+            qty: Number(item.qty ?? 0),
+            price: Number(item.price ?? 0),
+        }))
         await supabase.from('orders').insert({
             user_id: userId.value,
-            items: order.items,
+            items,
+            subtotal: order.subtotal,
+            delivery_fee: order.deliveryFee,
             total: order.total,
             location: order.location,
-            payment: order.payment,
+            payment: order.paymentMethod,
+            payment_method: order.paymentMethod,
+            payment_status: order.paymentStatus,
+            momo_number: order.momoNumber ?? null,
             status: 'placed',
+            notes: order.notes ?? null,
         })
     }
 
     async function saveDetection(detection: DetectionInput) {
-        if (!supabase || !userId.value) return
+        if (!userId.value) return
         await supabase.from('detections').insert({
             user_id: userId.value,
             disease: detection.disease,
@@ -178,7 +183,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function fetchOrders() {
-        if (!supabase || !userId.value) return []
+        if (!userId.value) return []
         const { data } = await supabase
             .from('orders')
             .select('*')
@@ -188,7 +193,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function fetchDetections() {
-        if (!supabase || !userId.value) return []
+        if (!userId.value) return []
         const { data } = await supabase
             .from('detections')
             .select('*')
@@ -198,11 +203,13 @@ export const useAuthStore = defineStore('auth', () => {
     }
 
     async function submitReview(review: ReviewInput) {
-        if (!supabase || !userId.value) return { error: 'Not logged in' as const }
+        if (!userId.value) return { error: 'Not logged in' as const }
+        const productId = Number(review.productId)
+        if (!Number.isFinite(productId)) return { error: { message: 'Invalid product id' } }
         const { error } = await supabase.from('reviews').upsert(
             {
                 user_id: userId.value,
-                product_id: String(review.productId),
+                product_id: productId,
                 rating: review.rating,
                 comment: review.comment,
             },
@@ -210,8 +217,6 @@ export const useAuthStore = defineStore('auth', () => {
         )
         return { error }
     }
-
-    const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
     return {
         session,
@@ -221,6 +226,9 @@ export const useAuthStore = defineStore('auth', () => {
         isGuest,
         userId,
         displayName,
+        contactType,
+        contactValue,
+        contactLabel,
         init,
         fetchProfile,
         saveProfile,
@@ -233,4 +241,8 @@ export const useAuthStore = defineStore('auth', () => {
         fetchDetections,
         submitReview,
     }
+}, {
+    persist: {
+        pick: ['profile'],
+    },
 })

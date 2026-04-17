@@ -39,14 +39,13 @@
                         <span v-if="!busy">Send verification code</span>
                         <span v-else class="dots"><span></span><span></span><span></span></span>
                     </button>
-                    <p class="mock-hint" v-if="isMock">Mock mode — use code <strong>123456</strong></p>
                 </div>
 
                 <!-- Step 2: OTP -->
                 <div v-else-if="step === 'otp'" key="otp" class="form-card">
                     <p class="otp-sent">Code sent to <strong>{{ displayIdentifier }}</strong></p>
                     <p class="field-label">Enter 6-digit code</p>
-                    <input class="field otp-field" v-model="otp" placeholder="123456" type="tel" inputmode="numeric"
+                    <input class="field otp-field" v-model="otp" placeholder="000000" type="tel" inputmode="numeric"
                         maxlength="6" @input="otp = otp.replace(/\D/g, '')" />
                     <p v-if="notice" class="notice-msg">{{ notice }}</p>
                     <p v-if="error" class="error-msg">{{ error }}</p>
@@ -60,7 +59,6 @@
                     <button class="btn-ghost" @click="step = 'identifier'; otp = ''; error = ''">
                         ← Change {{ isPhoneFlow ? 'number' : 'email' }}
                     </button>
-                    <p class="mock-hint" v-if="isMock">Mock code: <strong>123456</strong></p>
                 </div>
             </transition>
 
@@ -75,12 +73,10 @@
     import { useRoute, useRouter } from 'vue-router'
     import AppTopBar from '@/components/AppTopBar.vue'
     import { useAuthStore } from '@/stores/auth'
-    import { supabase } from '@/lib/supabase'
 
     const route = useRoute()
     const router = useRouter()
     const auth = useAuthStore()
-    const isMock = !supabase
 
     const otpChannel = import.meta.env.VITE_OTP_CHANNEL === 'phone' ? 'phone' : 'email'
     const isPhoneFlow = otpChannel === 'phone'

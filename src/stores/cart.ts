@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { clampMedicineQty, getMedicineStock } from '@/lib/medicineCatalog'
+
+const STORAGE_KEY = 'cropdr.cartState'
 
 interface CartItem {
     id: number | string
@@ -18,7 +20,7 @@ interface ProductInput {
 }
 
 export const useCartStore = defineStore('cart', () => {
-    const items = ref<CartItem[]>([])
+    const items = ref<CartItem[]>(loadPersistedItems())
     const DELIVERY_FEE = 5000
 
     const count = computed(() => items.value.reduce((sum, item) => sum + item.qty, 0))
@@ -71,5 +73,25 @@ export const useCartStore = defineStore('cart', () => {
         items.value = []
     }
 
+    watch(items, () => {
+        try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items.value))
+        } catch {
+            // Ignore storage failures.
+        }
+    }, { deep: true })
+
     return { items, count, subtotal, total, DELIVERY_FEE, inCart, add, setQty, increment, decrement, remove, clear, availableQty }
 })
+
+function loadPersistedItems() {
+    if (typeof window === 'undefined') return [] as CartItem[]
+    try {
+        const raw = window.localStorage.getItem(STORAGE_KEY)
+        if (!raw) return [] as CartItem[]
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+    } catch {
+        return [] as CartItem[]
+    }
+}

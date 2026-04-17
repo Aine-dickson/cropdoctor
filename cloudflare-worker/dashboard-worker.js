@@ -1,4 +1,10 @@
-const ANTHROPIC_MODEL = 'claude-opus-4-6'
+const ANTHROPIC_HAIKU_MODEL = 'claude-3-5-haiku-latest'
+const ANTHROPIC_SONNET_MODEL = 'claude-sonnet-4-20250514'
+const LOW_CONFIDENCE_RETAKE = 40
+const HEALTHY_STRONG_MIN = 75
+const HEALTHY_COMPETING_MIN = 15
+const HEALTHY_MARGIN_MIN = 15
+const CANDIDATE_CLOSE_GAP = 8
 
 export default {
     async fetch(request, env) {
@@ -32,11 +38,15 @@ export default {
                 const body = await request.json()
                 const disease = String(body.disease || '').trim()
                 const plant = String(body.plant || '').trim()
+                const confidence = typeof body.confidence === 'number' ? body.confidence : undefined
+                const confidenceBand = String(body.confidenceBand || '').trim().toLowerCase()
+                const diagnosisState = String(body.diagnosisState || '').trim().toLowerCase()
+                const sameFamilyCluster = Boolean(body.sameFamilyCluster)
                 if (!disease) {
                     return corsResponse(jsonResponse({ error: 'disease is required' }, 400), 400)
                 }
 
-                const result = await enrichDiseaseDiagnosis({ disease, plant }, env)
+                const result = await enrichDiseaseDiagnosis({ disease, plant, confidence, confidenceBand, diagnosisState, sameFamilyCluster }, env)
                 return corsResponse(jsonResponse(result), 200)
             }
 
@@ -48,6 +58,15 @@ export default {
                 }
 
                 const result = await diagnoseSymptoms(description, env)
+                return corsResponse(jsonResponse(result), 200)
+            }
+
+            if (url.pathname === '/admin/notifications/dispatch') {
+                if (!(await isDispatchAuthorized(request, env))) {
+                    return corsResponse(jsonResponse({ error: 'Unauthorized' }, 401), 401)
+                }
+
+                const result = await processPendingNotifications(env)
                 return corsResponse(jsonResponse(result), 200)
             }
 
@@ -99,31 +118,121 @@ async function assessPlantHealth(imageBase64, env, options = {}) {
         }
     }
 
+    const responseText = await response.text().catch(() => '')
+    console.log('[crop.health] /plant/health-assessment response', {
+        status: response.status,
+        ok: response.ok,
+        body: responseText,
+    })
+
     if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `Plant.id error: ${response.status}`)
+        throw new Error(responseText || `Plant.id error: ${response.status}`)
     }
 
-    const data = await response.json()
+    const data = responseText ? JSON.parse(responseText) : {}
     const cropTop = data?.result?.crop?.suggestions?.[0]
-    const diseaseTop = data?.result?.disease?.suggestions?.[0]
-    const healthyDetected = isHealthySuggestion(diseaseTop?.name || diseaseTop?.scientific_name) || !diseaseTop
+    const diseaseSuggestions = Array.isArray(data?.result?.disease?.suggestions) ? data.result.disease.suggestions : []
+    const rankedSuggestions = rankDiseaseSuggestions(diseaseSuggestions)
+    const topSuggestion = rankedSuggestions[0]
+    const nonHealthySuggestions = rankedSuggestions.filter((entry) => !isHealthySuggestion(entry.name))
+    const topDisease = nonHealthySuggestions[0]
+    const secondDisease = nonHealthySuggestions[1]
+    const topThree = nonHealthySuggestions.slice(0, 3)
+    const clusteredTopThree = hasRelatedTopThree(topThree)
+    const sameFamilyCluster = isSameFamilyPair(topDisease?.name, secondDisease?.name)
 
-    if (healthyDetected) {
+    const healthyTop = Boolean(topSuggestion) && isHealthySuggestion(topSuggestion.name)
+    const healthyConfidence = healthyTop ? topSuggestion.confidence : 0
+    const topDiseaseConfidence = topDisease?.confidence || 0
+    const confidenceGap = healthyTop
+        ? (topSuggestion && topDisease ? Math.max(0, topSuggestion.confidence - topDisease.confidence) : undefined)
+        : (topDisease && secondDisease ? Math.max(0, topDisease.confidence - secondDisease.confidence) : undefined)
+
+    const healthyUncertain = healthyTop && (
+        healthyConfidence < HEALTHY_STRONG_MIN
+        || (topDisease && topDisease.confidence >= HEALTHY_COMPETING_MIN && (confidenceGap ?? 0) < HEALTHY_MARGIN_MIN)
+    )
+
+    if (healthyTop && !healthyUncertain) {
         return {
             plant: cropTop?.name || cropTop?.scientific_name || 'Unknown plant',
             disease: 'Healthy plant',
-            confidence: Math.round(((cropTop?.probability || 1) * 100)),
+            confidence: healthyConfidence || Math.round(((cropTop?.probability || 1) * 100)),
             severity: 'None',
             healthy: true,
+            diagnosisState: 'healthy_strong',
+            confidenceGap,
+            sameFamilyCluster,
+            healthyUncertain: false,
+            topDiseases: topThree,
+            possibleDiseases: [],
         }
     }
 
+    if (healthyUncertain) {
+        return {
+            plant: cropTop?.name || cropTop?.scientific_name || 'Unknown plant',
+            disease: 'Healthy plant',
+            confidence: healthyConfidence,
+            severity: 'Uncertain',
+            healthy: false,
+            uncertain: true,
+            diagnosisState: 'healthy_uncertain',
+            confidenceGap,
+            sameFamilyCluster,
+            healthyUncertain: true,
+            topDiseases: topThree,
+            possibleDiseases: pickLowConfidenceCandidates(diseaseSuggestions),
+        }
+    }
+
+    const confidence = topDiseaseConfidence
+
+    if (confidence < LOW_CONFIDENCE_RETAKE && !clusteredTopThree) {
+        return {
+            plant: cropTop?.name || cropTop?.scientific_name || 'Unknown plant',
+            disease: topDisease?.name || 'Unknown disease',
+            confidence,
+            severity: 'Unknown',
+            needsRetake: true,
+            uncertain: true,
+            diagnosisState: 'low_confidence_retake',
+            message:
+                'Scan confidence is too low to diagnose safely. Please take a clearer photo before trying again.',
+            retakeTips: buildRetakeTips(),
+            confidenceGap,
+            sameFamilyCluster,
+            healthyUncertain: false,
+            possibleDiseases: pickLowConfidenceCandidates(diseaseSuggestions),
+            topDiseases: topThree,
+        }
+    }
+
+    const competingClose = Boolean(
+        topDisease
+        && secondDisease
+        && secondDisease.confidence >= HEALTHY_COMPETING_MIN
+        && (confidenceGap ?? 999) <= CANDIDATE_CLOSE_GAP,
+    )
+
+    const diagnosisState = competingClose
+        ? (sameFamilyCluster ? 'disease_competing_same_family' : 'disease_competing_mixed')
+        : 'disease_strong'
+
     return {
         plant: cropTop?.name || cropTop?.scientific_name || 'Unknown plant',
-        disease: diseaseTop.name || diseaseTop.scientific_name || 'Unknown disease',
-        confidence: Math.round((diseaseTop.probability || 0) * 100),
-        severity: diseaseTop.details?.severity || 'Medium',
+        disease: topDisease?.name || 'Unknown disease',
+        confidence,
+        severity: topDisease?.details?.severity || 'Medium',
+        confidenceBand: confidence >= 80 ? 'strong' : confidence >= 60 ? 'moderate' : 'weak',
+        uncertain: competingClose || confidence < 60,
+        clusteredTopThree,
+        diagnosisState,
+        confidenceGap,
+        sameFamilyCluster,
+        healthyUncertain: false,
+        topDiseases: topThree,
+        possibleDiseases: competingClose ? pickLowConfidenceCandidates(diseaseSuggestions) : [],
     }
 }
 
@@ -143,13 +252,26 @@ async function enrichDiseaseDiagnosis(input, env) {
         'Respond ONLY with JSON, no markdown.',
         '{"summary":"2-3 sentences","steps":["step1","step2","step3","step4"],"relatedDiseases":["d1","d2","d3"],"searchTerms":["term1","term2"]}',
         'Use simple practical language and low-cost actions.',
+        input.diagnosisState === 'healthy_uncertain'
+            ? 'Important: do not claim the plant is definitely healthy. State uncertainty clearly and recommend a photo retake plus short monitoring checks.'
+            : 'Give practical treatment-ready guidance when confidence is acceptable.',
+        input.diagnosisState === 'disease_competing_same_family'
+            ? 'Important: top disease options are close and from a similar family. Explain overlap briefly and include simple differentiators farmers can observe.'
+            : '',
+        input.diagnosisState === 'disease_competing_mixed'
+            ? 'Important: top disease options are close but mixed. Give branch-style checks (if symptom A then likely X, if symptom B then likely Y).'
+            : '',
         `Plant: ${input.plant || 'Unknown'}`,
         `Disease: ${input.disease}`,
+        `DiagnosisState: ${input.diagnosisState || 'unknown'}`,
+        `SameFamilyCluster: ${input.sameFamilyCluster ? 'yes' : 'no'}`,
     ].join('\n')
+
+    const model = selectEnrichmentModel(input)
 
     let parsed = {}
     try {
-        const raw = await callAnthropic(prompt, env, 600)
+        const raw = await callAnthropic(prompt, env, 600, model)
         parsed = parseJson(raw)
     } catch {
         return {
@@ -200,14 +322,14 @@ async function diagnoseSymptoms(description, env) {
     return {
         disease,
         confidence,
-        summary: stringOrFallback(parsed.summary, 'AI response incomplete.'),
+        summary: stringOrFallback(parsed.summary, 'System response incomplete.'),
         steps: normalizeArray(parsed.steps, 5, []),
         relatedDiseases: normalizeArray(parsed.relatedDiseases, 5, []),
         searchTerms: normalizeArray(parsed.searchTerms, 5, [disease]),
     }
 }
 
-async function callAnthropic(prompt, env, maxTokens) {
+async function callAnthropic(prompt, env, maxTokens, model = ANTHROPIC_SONNET_MODEL) {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -216,7 +338,7 @@ async function callAnthropic(prompt, env, maxTokens) {
             'content-type': 'application/json',
         },
         body: JSON.stringify({
-            model: ANTHROPIC_MODEL,
+            model,
             max_tokens: maxTokens,
             system: prompt,
             messages: [{ role: 'user', content: 'Return the JSON now.' }],
@@ -259,16 +381,6 @@ function fallbackSummary(disease) {
     return `${disease} can spread quickly in warm or wet conditions. Early action helps prevent major crop loss.`
 }
 
-function fallbackSteps() {
-    return [
-        'Remove heavily affected leaves and destroy them away from the garden.',
-        'Apply a recommended fungicide or control treatment early and repeat as directed.',
-        'Avoid overhead watering and keep leaves dry where possible.',
-        'Improve spacing and airflow between plants.',
-        'Rotate crops next season to reduce disease carry-over.',
-    ]
-}
-
 function normalizeKindwiseDatetime(value) {
     if (!value) return null
     const raw = String(value).trim()
@@ -286,9 +398,60 @@ function isHealthySuggestion(value) {
     return text.includes('healthy') || text.includes('no disease') || text === 'health' || text === 'healthy plant'
 }
 
-function isHealthySuggestion(value) {
-    const text = String(value || '').trim().toLowerCase()
-    return text.includes('healthy') || text.includes('no disease') || text === 'health' || text === 'healthy plant'
+function buildRetakeTips() {
+    return [
+        'Shoot in natural daylight, not shade.',
+        'Get within 20-30cm of the affected leaf or stem.',
+        'Avoid wet leaves (raindrops can confuse detection).',
+        'Capture the worst-affected area, not a healthy-looking part.',
+    ]
+}
+
+function hasRelatedTopThree(topThree) {
+    if (!Array.isArray(topThree) || topThree.length < 2) return false
+    const families = topThree.map((entry) => diseaseFamily(entry.name)).filter(Boolean)
+    const familyCounts = new Map()
+    families.forEach((family) => familyCounts.set(family, (familyCounts.get(family) || 0) + 1))
+    const sameFamily = Array.from(familyCounts.values()).some((count) => count >= 2)
+    if (sameFamily) return true
+
+    const baseTokens = diseaseTokens(topThree[0].name)
+    return topThree.slice(1).some((entry) => {
+        const compareTokens = diseaseTokens(entry.name)
+        for (const token of compareTokens) {
+            if (baseTokens.has(token)) return true
+        }
+        return false
+    })
+}
+
+function diseaseFamily(name) {
+    const text = String(name || '').toLowerCase()
+    const families = [
+        'blight',
+        'mildew',
+        'spot',
+        'rust',
+        'rot',
+        'wilt',
+        'virus',
+        'mosaic',
+        'curl',
+        'anthracnose',
+        'canker',
+        'scab',
+    ]
+    return families.find((family) => text.includes(family)) || ''
+}
+
+function diseaseTokens(name) {
+    const stopwords = new Set(['disease', 'leaf', 'plant', 'crop', 'of', 'the', 'and'])
+    const tokens = String(name || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((token) => token && token.length > 2 && !stopwords.has(token))
+    return new Set(tokens)
 }
 
 function jsonResponse(body, status = 200) {
@@ -309,4 +472,295 @@ function corsResponse(response, status = response?.status || 200) {
         status,
         headers,
     })
+}
+
+function selectEnrichmentModel(input) {
+    const diagnosisState = String(input?.diagnosisState || '').toLowerCase()
+    if (diagnosisState === 'healthy_uncertain' || diagnosisState === 'disease_competing_same_family' || diagnosisState === 'disease_competing_mixed') {
+        return ANTHROPIC_SONNET_MODEL
+    }
+
+    const band = String(input?.confidenceBand || '').toLowerCase()
+    if (band === 'strong') return ANTHROPIC_HAIKU_MODEL
+    if (band === 'moderate' || band === 'weak') return ANTHROPIC_SONNET_MODEL
+
+    const confidence = Number(input?.confidence)
+    if (Number.isFinite(confidence) && confidence >= 80) return ANTHROPIC_HAIKU_MODEL
+    return ANTHROPIC_SONNET_MODEL
+}
+
+function pickLowConfidenceCandidates(suggestions) {
+    const ranked = (Array.isArray(suggestions) ? suggestions : [])
+        .map((entry) => ({
+            name: entry?.name || entry?.scientific_name || 'Unknown disease',
+            confidence: Math.round((entry?.probability || 0) * 100),
+        }))
+        .filter((entry) => !isHealthySuggestion(entry.name))
+        .sort((a, b) => b.confidence - a.confidence)
+
+    if (!ranked.length) return []
+
+    const top = ranked[0]
+    const second = ranked[1]
+    if (!second) return [top]
+
+    const gap = Math.abs(top.confidence - second.confidence)
+    return gap <= CANDIDATE_CLOSE_GAP ? [top, second] : [top]
+}
+
+function rankDiseaseSuggestions(suggestions) {
+    return (Array.isArray(suggestions) ? suggestions : [])
+        .map((entry) => ({
+            ...entry,
+            name: entry?.name || entry?.scientific_name || 'Unknown disease',
+            confidence: Math.round((entry?.probability || 0) * 100),
+        }))
+        .sort((a, b) => b.confidence - a.confidence)
+}
+
+function isSameFamilyPair(nameA, nameB) {
+    if (!nameA || !nameB) return false
+    const familyA = diseaseFamily(nameA)
+    const familyB = diseaseFamily(nameB)
+    return Boolean(familyA && familyB && familyA === familyB)
+}
+
+async function isDispatchAuthorized(request, env) {
+    const expected = String(env.NOTIFICATION_DISPATCH_TOKEN || '').trim()
+    if (!expected) return false
+
+    const headerToken = String(request.headers.get('x-admin-notify-token') || '').trim()
+    const authHeader = String(request.headers.get('authorization') || '').trim()
+    const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+        ? authHeader.slice(7).trim()
+        : ''
+
+    if (headerToken === expected || bearerToken === expected) {
+        return true
+    }
+
+    if (!bearerToken || !env.VITE_SUPABASE_PUBLISHABLE_DEFAULT_KEY) {
+        return false
+    }
+
+    const userId = await getSupabaseUserId(env, bearerToken)
+    if (!userId) {
+        return false
+    }
+
+    return await isAdminProfile(env, userId)
+}
+
+async function getSupabaseUserId(env, accessToken) {
+    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+        method: 'GET',
+        headers: {
+            apikey: env.SUPABASE_ANON_KEY,
+            authorization: `Bearer ${accessToken}`,
+        },
+    })
+
+    if (!response.ok) {
+        return null
+    }
+
+    const data = await response.json().catch(() => null)
+    const userId = String(data?.id || '').trim()
+    return userId || null
+}
+
+async function isAdminProfile(env, userId) {
+    const url = `${env.SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=role,is_active`
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+            'content-type': 'application/json',
+        },
+    })
+
+    if (!response.ok) {
+        return false
+    }
+
+    const rows = await response.json().catch(() => [])
+    const profile = Array.isArray(rows) ? rows[0] : null
+    return Boolean(profile && profile.is_active !== false && (profile.role === 'admin' || profile.role === 'co_admin'))
+}
+
+async function processPendingNotifications(env) {
+    const rows = await fetchPendingNotifications(env, 50)
+    let sent = 0
+    let failed = 0
+    let skipped = 0
+
+    for (const row of rows) {
+        if (row.channel !== 'email') {
+            skipped += 1
+            continue
+        }
+
+        const recipient = String(row.recipient || '').trim().toLowerCase()
+        if (!recipient || !recipient.includes('@')) {
+            failed += 1
+            await markNotificationFailed(env, row.id, row.retry_count, 'Missing or invalid email recipient')
+            continue
+        }
+
+        try {
+            const email = buildNotificationEmail(row, env)
+            await sendResendEmail(env, {
+                to: recipient,
+                subject: email.subject,
+                html: email.html,
+            })
+            sent += 1
+            await markNotificationSent(env, row.id)
+        } catch (error) {
+            failed += 1
+            const message = error instanceof Error ? error.message : 'Unknown delivery error'
+            await markNotificationFailed(env, row.id, row.retry_count, message)
+        }
+    }
+
+    return {
+        processed: rows.length,
+        sent,
+        failed,
+        skipped,
+    }
+}
+
+async function fetchPendingNotifications(env, limit) {
+    const url = `${env.SUPABASE_URL}/rest/v1/notification_outbox?status=eq.pending&order=created_at.asc&limit=${limit}`
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+            'content-type': 'application/json',
+        },
+    })
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(text || `Failed to load notification outbox: ${response.status}`)
+    }
+
+    return await response.json()
+}
+
+async function markNotificationSent(env, id) {
+    const now = new Date().toISOString()
+    const response = await fetch(`${env.SUPABASE_URL}/rest/v1/notification_outbox?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: {
+            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+            'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+            status: 'sent',
+            sent_at: now,
+            retry_count: 0,
+            last_error: null,
+            updated_at: now,
+        }),
+    })
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(text || `Failed to mark notification as sent (${id})`)
+    }
+}
+
+async function markNotificationFailed(env, id, retryCount, errorMessage) {
+    const now = new Date().toISOString()
+    const retries = Number(retryCount || 0) + 1
+    const status = retries >= 3 ? 'failed' : 'pending'
+
+    const response = await fetch(`${env.SUPABASE_URL}/rest/v1/notification_outbox?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: {
+            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+            'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+            status,
+            retry_count: retries,
+            last_error: String(errorMessage || '').slice(0, 500),
+            updated_at: now,
+        }),
+    })
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(text || `Failed to mark notification as failed (${id})`)
+    }
+}
+
+async function sendResendEmail(env, params) {
+    const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+            authorization: `Bearer ${env.RESEND_API_KEY}`,
+            'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+            from: env.EMAIL_FROM,
+            to: [params.to],
+            subject: params.subject,
+            html: params.html,
+        }),
+    })
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(text || `Resend failed with status ${response.status}`)
+    }
+}
+
+function buildNotificationEmail(row, env) {
+    const payload = row.payload || {}
+    const role = String(payload.role || '').trim() || 'user'
+    const previousRole = String(payload.previous_role || '').trim()
+    const name = String(payload.name || '').trim() || 'there'
+    const loginUrl = String(env.ADMIN_PORTAL_URL || 'https://cropdoctor.bitpulse.dev/admin').trim()
+
+    if (row.template_key === 'account_created') {
+        return {
+            subject: 'Your CropDoctor staff account is ready',
+            html: `<p>Hello ${escapeHtml(name)},</p><p>Your account has been set up with <strong>${escapeHtml(role)}</strong> access.</p><p>You can sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p><p>If this wasn\'t expected, contact support immediately.</p>`,
+        }
+    }
+
+    if (row.template_key === 'role_elevated') {
+        return {
+            subject: 'Your CropDoctor access has been elevated',
+            html: `<p>Hello ${escapeHtml(name)},</p><p>Your access has been updated from <strong>${escapeHtml(previousRole || 'farmer')}</strong> to <strong>${escapeHtml(role)}</strong>.</p><p>Sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p>`,
+        }
+    }
+
+    if (row.template_key === 'role_switched') {
+        return {
+            subject: 'Your CropDoctor staff role has changed',
+            html: `<p>Hello ${escapeHtml(name)},</p><p>Your role has changed from <strong>${escapeHtml(previousRole || 'staff')}</strong> to <strong>${escapeHtml(role)}</strong>.</p><p>Sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p>`,
+        }
+    }
+
+    return {
+        subject: 'CropDoctor account update',
+        html: `<p>Hello ${escapeHtml(name)},</p><p>Your account details were updated.</p><p>Sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p>`,
+    }
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
 }

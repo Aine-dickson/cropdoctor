@@ -1,6 +1,6 @@
 <template>
     <div class="view">
-        <AppTopBar :title="product?.name || 'Product'" :show-back="true" back-to="/results" />
+        <AppTopBar :title="product?.name || 'Product'" :show-back="true" />
 
         <div v-if="!product" class="page center-msg">
             <p>Product not found. <router-link to="/results">Back to results</router-link></p>
@@ -60,7 +60,7 @@
                 <button class="btn-primary" :disabled="!isAvailable" @click="handleAdd">
                     {{ isAvailable ? (cart.inCart(product.id) ? `Update cart` : `Add to cart`) : `Out of stock` }}
                 </button>
-                <button class="btn-secondary" @click="router.back()">Back to results</button>
+                <button class="btn-secondary" @click="goBack(router)">Back</button>
             </div>
         </div>
     </div>
@@ -72,6 +72,7 @@
     import AppTopBar from '@/components/AppTopBar.vue'
     import { useDetectionStore } from '@/stores/detection'
     import { useCartStore } from '@/stores/cart'
+    import { goBack } from '@/lib/navigationHistory'
     import { getMedicineStockLabel, isMedicineInStock, getLowStockBadge } from '@/lib/medicineCatalog'
 
     const route = useRoute()
@@ -89,7 +90,7 @@
     function handleAdd() {
         if (!product.value || !isAvailable.value) return
         cart.add(product.value, qty.value)
-        router.push('/results')
+        goBack(router)
     }
 </script>
 

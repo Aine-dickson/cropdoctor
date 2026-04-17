@@ -19,6 +19,11 @@
                     <input class="field" v-model="form.address" placeholder="Village / town / district" />
                 </div>
 
+                <div class="field-group">
+                    <p class="field-label">Region</p>
+                    <input class="field" v-model="form.region" placeholder="Central / Eastern / Northern / Western" />
+                </div>
+
                 <div v-if="!hasVerifiedIdentifier" class="field-group">
                     <p class="field-label">{{ isPhoneFlow ? 'Phone number' : 'Email address' }}</p>
                     <input class="field" v-model="form.identifier"
@@ -98,7 +103,7 @@
         busy: false,
     })
 
-    const form = ref({ name: '', address: '', identifier: '' })
+    const form = ref({ name: '', address: '', region: '', identifier: '' })
     const isIdentifierValid = computed(() =>
         isPhoneFlow ? /^\+?\d{9,15}$/.test(form.value.identifier.trim()) : /.+@.+\..+/.test(form.value.identifier.trim()),
     )
@@ -110,6 +115,7 @@
     const canSave = computed(() =>
         !!form.value.name.trim() &&
         !!form.value.address.trim() &&
+        !!form.value.region.trim() &&
         (hasVerifiedIdentifier.value || verification.value.verified),
     )
 
@@ -137,7 +143,7 @@
         const { error: probeErr } = await auth.sendOtp(identifier, 'login')
         if (!probeErr) {
             verification.value.busy = false
-            form.value = { name: '', address: '', identifier: '' }
+            form.value = { name: '', address: '', region: '', identifier: '' }
             verification.value.verified = false
             verification.value.code = ''
             verification.value.sent = false
@@ -180,7 +186,7 @@
         }
         if (!isNew) {
             await auth.signOut()
-            form.value = { name: '', address: '', identifier: '' }
+            form.value = { name: '', address: '', region: '', identifier: '' }
             verification.value.verified = false
             verification.value.code = ''
             verification.value.sent = false
@@ -205,7 +211,8 @@
         const updates = {
             name: form.value.name,
             address: form.value.address,
-            ...(isPhoneFlow ? { phone: identifierToSave } : {}),
+            region: form.value.region,
+            ...(isPhoneFlow ? { phone: identifierToSave } : { email: identifierToSave }),
         }
         const { error: err } = await auth.saveProfile(updates)
         busy.value = false

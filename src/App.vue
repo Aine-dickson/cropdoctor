@@ -9,6 +9,7 @@
     import BottomTabBar from '@/components/BottomTabBar.vue'
     import { usePlatform } from '@/composables/usePlatform'
 
+
     const { isTauri } = usePlatform()
 </script>
 

@@ -151,9 +151,14 @@
         if (auth.isLoggedIn) {
             await auth.saveOrder({
                 items: JSON.parse(JSON.stringify(cart.items)),
+                subtotal: cart.subtotal,
+                deliveryFee: cart.DELIVERY_FEE,
                 total: cart.total,
                 location,
-                payment,
+                paymentMethod: payment,
+                paymentStatus: 'pending',
+                momoNumber: payment === 'cod' ? null : momoNumber,
+                notes: null,
             })
         }
 

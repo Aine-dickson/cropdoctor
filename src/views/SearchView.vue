@@ -160,21 +160,20 @@
 </template>
 
 <script setup>
-    import { ref, nextTick, onMounted } from 'vue'
+    import { nextTick, onMounted, ref } from 'vue'
+    import { storeToRefs } from 'pinia'
     import { useRouter } from 'vue-router'
     import AppTopBar from '@/components/AppTopBar.vue'
     import { useCartStore } from '@/stores/cart'
     import { enrichDiseaseDiagnosis } from '@/lib/agriAi'
     import { findMedicinesByDisease, MEDICINE_CATALOGUE, getMedicineStockLabel, isMedicineInStock, getLowStockBadge } from '@/lib/medicineCatalog'
+    import { useSearchStore } from '@/stores/search'
 
     const router = useRouter()
     const cart = useCartStore()
+    const search = useSearchStore()
+    const { query, searchType, searching, results, error } = storeToRefs(search)
     const inputEl = ref(null)
-    const query = ref('')
-    const searchType = ref('auto')
-    const searching = ref(false)
-    const results = ref(null)
-    const error = ref('')
 
     const suggestions = [
         'Late Blight', 'Powdery Mildew', 'Ridomil Gold', 'Rust',
@@ -188,7 +187,7 @@
         debounceTimer = setTimeout(runSearch, 600)
     }
 
-    function clear() { query.value = ''; results.value = null; error.value = '' }
+    function clear() { search.clear() }
 
     function stockClass(id) {
         return getLowStockBadge(id)
@@ -225,7 +224,11 @@
 
     // ── Search by disease ─────────────────────────────────────────────────────────
     async function searchByDisease(q) {
-        const ai = await enrichDiseaseDiagnosis({ disease: q })
+        const ai = await enrichDiseaseDiagnosis({
+            disease: q,
+            confidence: undefined,
+            confidenceBand: undefined,
+        })
         const medicines = findMedicinesByDisease(q, ai.searchTerms)
         return {
             type: 'disease',

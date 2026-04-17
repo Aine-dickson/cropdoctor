@@ -78,6 +78,7 @@
     import { useRouter } from 'vue-router'
     import { useCartStore } from '@/stores/cart'
     import { useAuthStore } from '@/stores/auth'
+    import { goBack } from '@/lib/navigationHistory'
 
     const props = defineProps({
         title: { type: String, default: '' },
@@ -93,7 +94,7 @@
 
     function handleBack() {
         if (props.backTo) router.push(props.backTo)
-        else router.back()
+        else goBack(router)
     }
 </script>
 

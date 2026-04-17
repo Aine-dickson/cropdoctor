@@ -13,6 +13,34 @@ export interface SymptomDiagnosis extends DiseaseEnrichment {
     confidence: 'High' | 'Medium' | 'Low'
 }
 
+export type DiagnosisState =
+    | 'healthy_strong'
+    | 'healthy_uncertain'
+    | 'disease_strong'
+    | 'disease_competing_same_family'
+    | 'disease_competing_mixed'
+    | 'low_confidence_retake'
+
+type PlantAssessment = {
+    plant: string
+    disease: string
+    confidence: number
+    severity: string
+    healthy?: boolean
+    needsRetake?: boolean
+    message?: string
+    retakeTips?: string[]
+    confidenceBand?: 'strong' | 'moderate' | 'weak'
+    uncertain?: boolean
+    clusteredTopThree?: boolean
+    topDiseases?: Array<{ name: string; confidence: number }>
+    possibleDiseases?: Array<{ name: string; confidence: number }>
+    diagnosisState?: DiagnosisState
+    confidenceGap?: number
+    sameFamilyCluster?: boolean
+    healthyUncertain?: boolean
+}
+
 async function edgeJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
     if (!EDGE_API_BASE_URL) {
         throw new Error('Worker URL is missing. Set VITE_EDGE_API_BASE_URL for both local and production builds.')
@@ -35,13 +63,7 @@ async function edgeJson<T>(path: string, body: Record<string, unknown>): Promise
 export async function assessPlantHealth(
     base64: string,
     context: { latitude?: number; longitude?: number; datetime?: string } = {},
-): Promise<{
-    plant: string
-    disease: string
-    confidence: number
-    severity: string
-    healthy?: boolean
-}> {
+): Promise<PlantAssessment> {
     return edgeJson('/plant/health-assessment', {
         imageBase64: base64,
         latitude: context.latitude,
@@ -50,7 +72,14 @@ export async function assessPlantHealth(
     })
 }
 
-export async function enrichDiseaseDiagnosis(input: { disease: string; plant?: string }): Promise<DiseaseEnrichment> {
+export async function enrichDiseaseDiagnosis(input: {
+    disease: string
+    plant?: string
+    confidence?: number
+    confidenceBand?: 'strong' | 'moderate' | 'weak'
+    diagnosisState?: DiagnosisState
+    sameFamilyCluster?: boolean
+}): Promise<DiseaseEnrichment> {
     return edgeJson('/ai/enrich-disease', input)
 }
 
@@ -61,13 +90,7 @@ export async function diagnoseSymptoms(description: string): Promise<SymptomDiag
 export async function assessPlantHealthWithContext(
     base64: string,
     context: { latitude?: number; longitude?: number; datetime?: string } = {},
-): Promise<{
-    plant: string
-    disease: string
-    confidence: number
-    severity: string
-    healthy?: boolean
-}> {
+): Promise<PlantAssessment> {
     return edgeJson('/plant/health-assessment', {
         imageBase64: base64,
         latitude: context.latitude,
