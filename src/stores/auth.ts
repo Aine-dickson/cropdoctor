@@ -118,7 +118,11 @@ export const useAuthStore = defineStore('auth', () => {
         return { error }
     }
 
-    async function verifyOtp(identifier: string, token: string): Promise<{ error: MaybeError; isNew?: boolean }> {
+    async function verifyOtp(
+        identifier: string,
+        token: string,
+        mode: 'login' | 'signup' = 'login',
+    ): Promise<{ error: MaybeError; isNew?: boolean }> {
         const { data, error } =
             otpChannel === 'phone'
                 ? await supabase.auth.verifyOtp({ phone: identifier, token, type: 'sms' })
@@ -129,15 +133,13 @@ export const useAuthStore = defineStore('auth', () => {
         const sessionUserId = data.session?.user?.id
         if (!sessionUserId) return { error: { message: 'Could not resolve user session.' } }
 
-        const { data: prof } = await supabase
-            .from('profiles')
-            .select('id')
-            .eq('id', sessionUserId)
-            .single()
+        await fetchProfile()
 
-        const isNew = !prof
-        if (!isNew) await fetchProfile()
-        return { error: null, isNew }
+        if (mode === 'signup') {
+            return { error: null, isNew: true }
+        }
+
+        return { error: null, isNew: false }
     }
 
     async function signOut() {

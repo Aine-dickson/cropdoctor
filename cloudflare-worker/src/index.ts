@@ -1,12 +1,6 @@
 export interface Env {
     PLANT_ID_KEY: string
     ANTHROPIC_API_KEY: string
-    SUPABASE_URL: string
-    SUPABASE_SERVICE_ROLE_KEY: string
-    RESEND_API_KEY: string
-    EMAIL_FROM: string
-    ADMIN_PORTAL_URL?: string
-    NOTIFICATION_DISPATCH_TOKEN?: string
 }
 
 type JSONValue = string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue }
@@ -51,16 +45,6 @@ type DiseaseEnrichmentRequest = {
 type SymptomDiagnosisResponse = DiseaseEnrichmentResponse & {
     disease: string
     confidence: 'High' | 'Medium' | 'Low'
-}
-
-type NotificationOutboxRow = {
-    id: string
-    user_id: string | null
-    channel: 'email' | 'sms'
-    recipient: string
-    template_key: string
-    payload: Record<string, unknown> | null
-    retry_count: number
 }
 
 const ANTHROPIC_HAIKU_MODEL = 'claude-3-5-haiku-latest'
@@ -122,14 +106,6 @@ export default {
                 return corsResponse(jsonResponse(result), 200)
             }
 
-            if (url.pathname === '/admin/notifications/dispatch') {
-                if (!isDispatchAuthorized(request, env)) {
-                    return corsResponse(jsonResponse({ error: 'Unauthorized' }, 401), 401)
-                }
-
-                const result = await processPendingNotifications(env)
-                return corsResponse(jsonResponse(result), 200)
-            }
 
             return corsResponse(jsonResponse({ error: 'Not found' }, 404), 404)
         } catch (error) {
@@ -480,191 +456,4 @@ function pickLowConfidenceCandidates(
     const gap = Math.abs(top.confidence - second.confidence)
     const CLOSE_GAP_THRESHOLD = 8
     return gap <= CLOSE_GAP_THRESHOLD ? [top, second] : [top]
-}
-
-function isDispatchAuthorized(request: Request, env: Env) {
-    const expected = String(env.NOTIFICATION_DISPATCH_TOKEN ?? '').trim()
-    if (!expected) return false
-
-    const headerToken = String(request.headers.get('x-admin-notify-token') ?? '').trim()
-    const authHeader = String(request.headers.get('authorization') ?? '').trim()
-    const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
-        ? authHeader.slice(7).trim()
-        : ''
-
-    return headerToken === expected || bearerToken === expected
-}
-
-async function processPendingNotifications(env: Env) {
-    const rows = await fetchPendingNotifications(env, 50)
-    let sent = 0
-    let failed = 0
-    let skipped = 0
-
-    for (const row of rows) {
-        if (row.channel !== 'email') {
-            skipped += 1
-            continue
-        }
-
-        const recipient = String(row.recipient ?? '').trim().toLowerCase()
-        if (!recipient || !recipient.includes('@')) {
-            failed += 1
-            await markNotificationFailed(env, row.id, row.retry_count, 'Missing or invalid email recipient')
-            continue
-        }
-
-        try {
-            const email = buildNotificationEmail(row, env)
-            await sendResendEmail(env, {
-                to: recipient,
-                subject: email.subject,
-                html: email.html,
-            })
-            sent += 1
-            await markNotificationSent(env, row.id)
-        } catch (error) {
-            failed += 1
-            const message = error instanceof Error ? error.message : 'Unknown delivery error'
-            await markNotificationFailed(env, row.id, row.retry_count, message)
-        }
-    }
-
-    return {
-        processed: rows.length,
-        sent,
-        failed,
-        skipped,
-    }
-}
-
-async function fetchPendingNotifications(env: Env, limit: number) {
-    const url = `${env.SUPABASE_URL}/rest/v1/notification_outbox?status=eq.pending&order=created_at.asc&limit=${limit}`
-    const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-            'content-type': 'application/json',
-        },
-    })
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `Failed to load notification outbox: ${response.status}`)
-    }
-
-    return (await response.json()) as NotificationOutboxRow[]
-}
-
-async function markNotificationSent(env: Env, id: string) {
-    const response = await fetch(`${env.SUPABASE_URL}/rest/v1/notification_outbox?id=eq.${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: {
-            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-            'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-            status: 'sent',
-            sent_at: new Date().toISOString(),
-            retry_count: 0,
-            last_error: null,
-            updated_at: new Date().toISOString(),
-        }),
-    })
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `Failed to mark notification as sent (${id})`)
-    }
-}
-
-async function markNotificationFailed(env: Env, id: string, retryCount: number, errorMessage: string) {
-    const retries = Number(retryCount ?? 0) + 1
-    const status = retries >= 3 ? 'failed' : 'pending'
-
-    const response = await fetch(`${env.SUPABASE_URL}/rest/v1/notification_outbox?id=eq.${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        headers: {
-            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-            authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-            'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-            status,
-            retry_count: retries,
-            last_error: String(errorMessage || '').slice(0, 500),
-            updated_at: new Date().toISOString(),
-        }),
-    })
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `Failed to mark notification as failed (${id})`)
-    }
-}
-
-async function sendResendEmail(env: Env, params: { to: string; subject: string; html: string }) {
-    const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-            authorization: `Bearer ${env.RESEND_API_KEY}`,
-            'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-            from: env.EMAIL_FROM,
-            to: [params.to],
-            subject: params.subject,
-            html: params.html,
-        }),
-    })
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `Resend failed with status ${response.status}`)
-    }
-}
-
-function buildNotificationEmail(row: NotificationOutboxRow, env: Env) {
-    const payload = row.payload ?? {}
-    const role = String(payload.role ?? '').trim() || 'user'
-    const previousRole = String(payload.previous_role ?? '').trim()
-    const name = String(payload.name ?? '').trim() || 'there'
-    const loginUrl = String(env.ADMIN_PORTAL_URL ?? 'https://cropdoctor.bitpulse.dev/admin').trim()
-
-    if (row.template_key === 'account_created') {
-        return {
-            subject: 'Your CropDoctor staff account is ready',
-            html: `<p>Hello ${escapeHtml(name)},</p><p>Your account has been set up with <strong>${escapeHtml(role)}</strong> access.</p><p>You can sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p><p>If this wasn\'t expected, contact support immediately.</p>`,
-        }
-    }
-
-    if (row.template_key === 'role_elevated') {
-        return {
-            subject: 'Your CropDoctor access has been elevated',
-            html: `<p>Hello ${escapeHtml(name)},</p><p>Your access has been updated from <strong>${escapeHtml(previousRole || 'farmer')}</strong> to <strong>${escapeHtml(role)}</strong>.</p><p>Sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p>`,
-        }
-    }
-
-    if (row.template_key === 'role_switched') {
-        return {
-            subject: 'Your CropDoctor staff role has changed',
-            html: `<p>Hello ${escapeHtml(name)},</p><p>Your role has changed from <strong>${escapeHtml(previousRole || 'staff')}</strong> to <strong>${escapeHtml(role)}</strong>.</p><p>Sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p>`,
-        }
-    }
-
-    return {
-        subject: 'CropDoctor account update',
-        html: `<p>Hello ${escapeHtml(name)},</p><p>Your account details were updated.</p><p>Sign in at: <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a></p>`,
-    }
-}
-
-function escapeHtml(value: string) {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;')
 }

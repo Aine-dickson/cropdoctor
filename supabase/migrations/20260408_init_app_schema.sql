@@ -22,7 +22,7 @@ drop function if exists public.handle_new_user();
 drop function if exists public.set_updated_at();
 drop function if exists public.can_access_admin();
 drop function if exists public.can_start_admin_login(text);
-drop function if exists public.admin_create_profile(text, text, text, text, text, text, text);
+drop function if exists public.sync_supplier_from_profile();
 drop function if exists public.supplier_order_access(jsonb);
 drop function if exists public.prevent_supplier_order_update();
 drop function if exists public.current_role();
@@ -394,154 +394,100 @@ $$;
 
 create or replace function public.can_start_admin_login(identifier text)
 returns table (allowed boolean, reason text, role text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+    with input as (
+        select
+            coalesce(trim(identifier), '') as raw,
+            lower(coalesce(trim(identifier), '')) as lookup_email,
+            regexp_replace(coalesce(trim(identifier), ''), '\\D', '', 'g') as lookup_phone_digits
+    ),
+    matched as (
+        select p.role, p.is_active
+        from input i
+        join public.profiles p
+            on (
+                (position('@' in i.raw) > 0 and lower(coalesce(p.email, '')) = i.lookup_email)
+                or
+                (position('@' in i.raw) = 0 and i.lookup_phone_digits <> '' and regexp_replace(coalesce(p.phone, ''), '\\D', '', 'g') = i.lookup_phone_digits)
+            )
+        limit 1
+    )
+    select
+        case
+            when i.raw = '' then false
+            when position('@' in i.raw) = 0 and i.lookup_phone_digits = '' then false
+            when m.role is null then false
+            when m.is_active is false then false
+            when m.role not in ('admin', 'co_admin', 'supplier') then false
+            else true
+        end as allowed,
+        case
+            when i.raw = '' then 'Enter a registered email address or phone number.'
+            when position('@' in i.raw) = 0 and i.lookup_phone_digits = '' then 'Enter a valid phone number.'
+            when m.role is null then 'Access denied.'
+            when m.is_active is false then 'This account has been deactivated.'
+            when m.role not in ('admin', 'co_admin', 'supplier') then 'Access denied.'
+            else null
+        end as reason,
+        m.role
+    from input i
+    left join matched m on true;
+$$;
+
+create or replace function public.sync_supplier_from_profile()
+returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-    raw text := coalesce(trim(identifier), '');
-    lookup_email text := lower(raw);
-    lookup_phone_digits text := regexp_replace(raw, '\D', '', 'g');
-    profile_record public.profiles%rowtype;
+    supplier_business_name text;
+    supplier_region text;
+    supplier_location text;
 begin
-    if raw = '' then
-        return query select false, 'Enter a registered email address or phone number.', null::text;
-        return;
+    if new.role <> 'supplier' then
+        return new;
     end if;
 
-    if position('@' in raw) > 0 then
-        select *
-        into profile_record
-        from public.profiles
-        where lower(coalesce(email, '')) = lookup_email
-        limit 1;
-    else
-        if lookup_phone_digits = '' then
-            return query select false, 'Enter a valid phone number.', null::text;
-            return;
-        end if;
+    supplier_business_name := coalesce(nullif(trim(coalesce(new.name, '')), ''), 'Supplier ' || left(new.id::text, 8));
+    supplier_region := coalesce(nullif(trim(coalesce(new.region, '')), ''), 'Unknown');
+    supplier_location := coalesce(nullif(trim(coalesce(new.address, '')), ''), supplier_region);
 
-        select *
-        into profile_record
-        from public.profiles
-        where regexp_replace(coalesce(phone, ''), '\D', '', 'g') = lookup_phone_digits
-        limit 1;
-    end if;
+    update public.suppliers
+    set
+        business_name = supplier_business_name,
+        contact_phone = coalesce(new.phone, contact_phone),
+        email = coalesce(new.email, email),
+        region = supplier_region,
+        location = supplier_location,
+        updated_at = now()
+    where profile_id = new.id;
 
     if not found then
-        return query select false, 'Access denied.', null::text;
-        return;
-    end if;
-
-    if profile_record.is_active is false then
-        return query select false, 'This account has been deactivated.', profile_record.role;
-        return;
-    end if;
-
-    if profile_record.role not in ('admin', 'co_admin', 'supplier') then
-        return query select false, 'Access denied.', profile_record.role;
-        return;
-    end if;
-
-    return query select true, null, profile_record.role;
-end;
-$$;
-
-create or replace function public.admin_create_profile(
-    identifier text,
-    new_name text default null,
-    new_phone text default null,
-    new_email text default null,
-    new_address text default null,
-    new_region text default null,
-    new_role text default 'farmer'
-)
-returns uuid
-language plpgsql
-security definer
-set search_path = public, auth
-as $$
-declare
-    raw text := coalesce(trim(identifier), '');
-    lookup_email text := lower(raw);
-    lookup_phone_digits text := regexp_replace(raw, '\D', '', 'g');
-    target_user_id uuid;
-    resolved_email text;
-    resolved_phone text;
-    profile_existed boolean;
-begin
-    if not public.is_staff() then
-        raise exception 'Only staff can create user profiles';
-    end if;
-
-    if raw = '' then
-        raise exception 'Identifier is required';
-    end if;
-
-    if coalesce(new_role, 'farmer') not in ('admin', 'co_admin', 'supplier', 'farmer') then
-        raise exception 'Invalid role';
-    end if;
-
-    if position('@' in raw) > 0 then
-        select id, email, phone
-        into target_user_id, resolved_email, resolved_phone
-        from auth.users
-        where lower(coalesce(email, '')) = lookup_email
-        limit 1;
-    else
-        if lookup_phone_digits = '' then
-            raise exception 'Invalid phone number';
-        end if;
-
-        select id, email, phone
-        into target_user_id, resolved_email, resolved_phone
-        from auth.users
-        where regexp_replace(coalesce(phone, ''), '\D', '', 'g') = lookup_phone_digits
-        limit 1;
-    end if;
-
-    if target_user_id is null then
-        raise exception 'No authenticated account found for this identifier';
-    end if;
-
-    select exists(select 1 from public.profiles where id = target_user_id) into profile_existed;
-
-    insert into public.profiles (id, name, phone, email, address, region, role, is_active)
-    values (
-        target_user_id,
-        nullif(trim(coalesce(new_name, '')), ''),
-        coalesce(nullif(trim(coalesce(new_phone, '')), ''), resolved_phone),
-        coalesce(nullif(lower(trim(coalesce(new_email, ''))), ''), resolved_email),
-        nullif(trim(coalesce(new_address, '')), ''),
-        nullif(trim(coalesce(new_region, '')), ''),
-        coalesce(new_role, 'farmer'),
-        true
-    )
-    on conflict (id) do update
-    set
-        name = excluded.name,
-        phone = excluded.phone,
-        email = excluded.email,
-        address = excluded.address,
-        region = excluded.region,
-        role = excluded.role,
-        is_active = true,
-        updated_at = now();
-
-    if not profile_existed then
-        perform public.queue_account_notification(
-            coalesce(nullif(lower(trim(coalesce(new_email, ''))), ''), resolved_email),
-            'account_created',
-            jsonb_build_object(
-                'name', coalesce(nullif(trim(coalesce(new_name, '')), ''), ''),
-                'role', coalesce(new_role, 'farmer'),
-                'event', 'created'
-            ),
-            target_user_id
+        insert into public.suppliers (
+            profile_id,
+            business_name,
+            contact_phone,
+            email,
+            region,
+            location,
+            is_verified
+        ) values (
+            new.id,
+            supplier_business_name,
+            nullif(trim(coalesce(new.phone, '')), ''),
+            nullif(lower(trim(coalesce(new.email, ''))), ''),
+            supplier_region,
+            supplier_location,
+            false
         );
     end if;
 
-    return target_user_id;
+    return new;
 end;
 $$;
 
@@ -600,6 +546,7 @@ create trigger on_auth_user_created after insert on auth.users for each row exec
 create trigger set_profiles_updated_at before update on public.profiles for each row execute function public.set_updated_at();
 create trigger prevent_profile_privilege_escalation before update on public.profiles for each row execute function public.prevent_profile_privilege_escalation();
 create trigger notify_profile_account_events after insert or update of role, is_active, email, name on public.profiles for each row execute function public.notify_profile_account_events();
+create trigger sync_supplier_from_profile after insert or update of role, name, phone, email, region, address on public.profiles for each row execute function public.sync_supplier_from_profile();
 create trigger set_suppliers_updated_at before update on public.suppliers for each row execute function public.set_updated_at();
 create trigger set_products_updated_at before update on public.products for each row execute function public.set_updated_at();
 create trigger sync_order_fields before insert or update on public.orders for each row execute function public.sync_order_fields();

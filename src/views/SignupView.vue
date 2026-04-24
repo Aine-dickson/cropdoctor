@@ -44,7 +44,7 @@
 
                 <p v-if="error" class="error-msg">{{ error }}</p>
 
-                <button class="btn-primary" :disabled="!canSave || busy" @click="handleSave">
+                <button v-if="hasVerifiedIdentifier" class="btn-primary" :disabled="!canSave || busy" @click="handleSave">
                     <span v-if="!busy">Save and continue</span>
                     <span v-else class="dots"><span></span><span></span><span></span></span>
                 </button>
@@ -178,31 +178,30 @@
     async function verifyIdentifier() {
         error.value = ''
         verification.value.busy = true
-        const { error: err, isNew } = await auth.verifyOtp(normalizedIdentifier.value, verification.value.code)
-        verification.value.busy = false
+        const { error: err } = await auth.verifyOtp(normalizedIdentifier.value, verification.value.code, 'signup')
         if (err) {
+            verification.value.busy = false
             error.value = (typeof err === 'string' ? err : err?.message) ?? 'Invalid code.'
             return
         }
-        if (!isNew) {
-            await auth.signOut()
-            form.value = { name: '', address: '', region: '', identifier: '' }
-            verification.value.verified = false
-            verification.value.code = ''
-            verification.value.sent = false
-            await router.push({
-                path: '/login',
-                query: {
-                    reason: 'existing-account',
-                    identifier: normalizedIdentifier.value,
-                    step: 'otp',
-                },
-            })
+
+        const identifierToSave = normalizedIdentifier.value
+        const updates = {
+            name: form.value.name,
+            address: form.value.address,
+            region: form.value.region,
+            ...(isPhoneFlow ? { phone: identifierToSave } : { email: identifierToSave }),
+        }
+        const { error: saveErr } = await auth.saveProfile(updates)
+        verification.value.busy = false
+        if (saveErr) {
+            error.value = saveErr.message ?? 'Verification worked but we could not save your profile. Please try again.'
             return
         }
+
         verification.value.verified = true
-        // Reset to form view after successful verification
-        verification.value.sent = false
+        guestCheckout.clearContact()
+        await router.push('/account')
     }
     async function handleSave() {
         busy.value = true
@@ -223,6 +222,13 @@
 </script>
 
 <style scoped>
+@reference '../main.css';
+    .btn-secondary {
+        @apply px-4 py-2.5 rounded-xl bg-green-700 text-white text-sm font-semibold hover:bg-green-800 active:bg-green-900 transition-colors;
+    }
+    .btn-secondary:disabled {
+        @apply text-slate-800 border-2 border-slate-600 bg-white cursor-not-allowed;
+    }
     .view {
         display: flex;
         flex-direction: column;
@@ -291,7 +297,7 @@
         background: var(--surface2);
         border: 2px solid var(--border);
         border-radius: 12px;
-        padding: 16px 14px;
+        padding: 0.5rem 0.5rem;
         color: var(--text);
         transition: border-color 0.2s;
         appearance: none;

@@ -42,9 +42,11 @@
                     </div>
                     <div class="profile-info">
                         <h2 class="profile-name">{{ auth.profile?.name || 'Farmer' }}</h2>
-                        <p class="profile-contact" v-if="contactValue">{{ contactLabel }}: {{ contactValue }}</p>
-                        <p class="profile-address" v-if="auth.profile?.address">{{ auth.profile.address }}</p>
-                        <p class="profile-region" v-if="auth.profile?.region">Region: {{ auth.profile.region }}</p>
+                        <p class="font-bold" v-if="contactValue">
+                            {{ contactLabel }}: 
+                            <span class="text-(--muted)">{{ contactValue }}</span>
+                        </p>
+                        <p class="profile-address" v-if="auth.profile?.address">{{ auth.profile.address }}, {{ auth.profile.region }} region</p>
                     </div>
                     <button class="edit-btn" @click="editing = true" aria-label="Edit profile">
                         <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none"
@@ -370,7 +372,7 @@
     }
 
     .profile-address {
-        font-size: 12px;
+        font-size: 1rem;
         color: var(--muted);
         margin-top: 2px;
         white-space: nowrap;

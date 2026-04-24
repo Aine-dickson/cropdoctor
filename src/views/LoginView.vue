@@ -14,7 +14,9 @@
                     </svg>
                 </div>
                 <h2 class="auth-title">{{ isPhoneFlow ? 'Continue with your phone' : 'Continue with your email' }}</h2>
-                <p class="auth-sub">{{ isPhoneFlow ? 'We will send a one-time code to verify your number' : 'We will send a one - time code to verify your email' }}</p>
+                <p class="auth-sub">
+                    {{ isPhoneFlow ? 'We will send a one-time code to verify your number' : 'We will send a one - time code to verify your email' }}
+                </p>
             </div>
 
             <!-- Step 1: Identifier -->
@@ -183,7 +185,7 @@
         busy.value = true
         error.value = ''
         notice.value = ''
-        const { error: err, isNew } = await auth.verifyOtp(normalizedIdentifier.value, otp.value)
+        const { error: err, isNew } = await auth.verifyOtp(normalizedIdentifier.value, otp.value, 'login')
         busy.value = false
         if (err) {
             const message = (typeof err === 'string' ? err : err?.message) ?? 'Could not verify code.'
@@ -203,6 +205,13 @@
 </script>
 
 <style scoped>
+@reference '../main.css';
+    .btn-primary {
+        @apply px-4 py-2.5 rounded-xl bg-green-700 text-white text-sm font-semibold hover:bg-green-800 active:bg-green-900 transition-colors;
+    }
+    .btn-primary:disabled {
+        @apply text-slate-800 border-2 border-slate-600 bg-white cursor-not-allowed;
+    }
     .view {
         display: flex;
         flex-direction: column;
